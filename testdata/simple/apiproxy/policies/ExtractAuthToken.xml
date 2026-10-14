@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage name="ExtractAuthToken">
+    <DisplayName>Extract Auth Token</DisplayName>
+    <AssignTo type="request" createNew="false"/>
+    <AssignVariable>
+        <Name>request.header.authorization</Name>
+        <Ref>request.header.Authorization</Ref>
+    </AssignVariable>
+</AssignMessage>

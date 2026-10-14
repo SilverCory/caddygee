@@ -1,0 +1,29 @@
+# Binaries
+caddy
+caddy-custom
+caddygee-cli
+caddygee-server
+dist/
+
+# Go build cache
+*.test
+*.out
+
+# Environment / credentials
+.env
+*.json
+!testdata/**/*.json
+
+# Caddyfile outputs
+Caddyfile
+*.caddyfile
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

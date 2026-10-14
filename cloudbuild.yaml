@@ -1,0 +1,73 @@
+steps:
+  # ── 1. Run tests ─────────────────────────────────────────────────────────────
+  - name: golang:1.26-alpine
+    id: test
+    entrypoint: go
+    args: [test, ./...]
+    env:
+      - GOPATH=/go
+      - GOMODCACHE=/go/pkg/mod
+    volumes:
+      - name: go-modules
+        path: /go/pkg/mod
+
+  # ── 2. Build and push the container image ────────────────────────────────────
+  - name: gcr.io/cloud-builders/docker
+    id: build
+    waitFor: [test]
+    args:
+      - build
+      - --tag=${_IMAGE}:${SHORT_SHA}
+      - --tag=${_IMAGE}:latest
+      - --cache-from=${_IMAGE}:latest
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: push-sha
+    waitFor: [build]
+    args: [push, "${_IMAGE}:${SHORT_SHA}"]
+
+  - name: gcr.io/cloud-builders/docker
+    id: push-latest
+    waitFor: [build]
+    args: [push, "${_IMAGE}:latest"]
+
+  # ── 3. Deploy to Cloud Run ───────────────────────────────────────────────────
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: deploy
+    waitFor: [push-sha, push-latest]
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_NAME}
+      - --image=${_IMAGE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --no-allow-unauthenticated
+      - --port=8080
+      - --min-instances=1
+      - --max-instances=10
+      - --cpu=1
+      - --memory=512Mi
+      - --set-env-vars=ENVIRONMENT_NAME=${_ENVIRONMENT_NAME}
+      - --service-account=${_SERVICE_ACCOUNT}
+
+substitutions:
+  # Override these in your Cloud Build trigger or with --substitutions on the CLI.
+  _REGION: europe-west2
+  _SERVICE_NAME: caddygee
+  _ENVIRONMENT_NAME: prod
+  # Artifact Registry image path — update PROJECT_ID and repo name.
+  _IMAGE: europe-west2-docker.pkg.dev/${PROJECT_ID}/caddygee/caddygee
+  # Service account the Cloud Run revision runs as (needs roles/run.invoker
+  # on backends and roles/iam.serviceAccountTokenCreator for Google ID tokens).
+  _SERVICE_ACCOUNT: caddygee@${PROJECT_ID}.iam.gserviceaccount.com
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+images:
+  - ${_IMAGE}:${SHORT_SHA}
+  - ${_IMAGE}:latest

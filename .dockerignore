@@ -1,0 +1,21 @@
+# Build artefacts
+caddy
+caddygee-cli
+caddygee-server
+
+# Test / dev files
+testdata/
+*_test.go
+
+# Local config / secrets
+.env
+*.local
+
+# VCS
+.git/
+.gitignore
+
+# Docs / plans
+*.md
+spec.md
+PLAN.md
