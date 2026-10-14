@@ -1,8 +1,8 @@
-# Binaries
-caddy
-caddy-custom
-caddygee-cli
-caddygee-server
+# Binaries (built output at repo root, not the cmd/ source directories)
+/caddy
+/caddy-custom
+/caddygee-cli
+/caddygee-server
 dist/
 
 # Go build cache
