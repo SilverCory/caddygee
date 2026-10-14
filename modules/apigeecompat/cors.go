@@ -91,10 +91,18 @@ func (c CORS) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.H
 
 	// Preflight: respond 204 immediately.
 	if r.Method == http.MethodOptions {
+		debugLog(r, c.logger, "apigee_cors: preflight",
+			zap.String("origin", origin),
+			zap.String("allow_origin", allowOrigin),
+		)
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	}
 
+	debugLog(r, c.logger, "apigee_cors: headers set",
+		zap.String("origin", origin),
+		zap.String("allow_origin", allowOrigin),
+	)
 	return next.ServeHTTP(w, r)
 }
 

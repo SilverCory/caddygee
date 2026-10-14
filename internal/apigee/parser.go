@@ -145,6 +145,24 @@ func parsePolicyFile(path string) (Policy, error) {
 			return Policy{}, fmt.Errorf("unmarshal VerifyAPIKey: %w", err)
 		}
 		p.VerifyAPIKey = &vak
+	case "ExtractVariables":
+		var ev ExtractVariablesPolicy
+		if err := xml.Unmarshal(data, &ev); err != nil {
+			return Policy{}, fmt.Errorf("unmarshal ExtractVariables: %w", err)
+		}
+		p.ExtractVariables = &ev
+	case "Quota":
+		var q QuotaPolicy
+		if err := xml.Unmarshal(data, &q); err != nil {
+			return Policy{}, fmt.Errorf("unmarshal Quota: %w", err)
+		}
+		p.Quota = &q
+	case "KeyValueMapOperations":
+		var kvm KVMPolicy
+		if err := xml.Unmarshal(data, &kvm); err != nil {
+			return Policy{}, fmt.Errorf("unmarshal KeyValueMapOperations: %w", err)
+		}
+		p.KVM = &kvm
 	default:
 		// Unknown policy types are stored with type only — no parsed config.
 		// The transpiler will emit a comment for unsupported types.

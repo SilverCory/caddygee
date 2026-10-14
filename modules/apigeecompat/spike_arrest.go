@@ -100,6 +100,9 @@ func (sa *SpikeArrest) ServeHTTP(w http.ResponseWriter, r *http.Request, next ca
 
 	if sa.tokens < 1 {
 		sa.mu.Unlock()
+		debugLog(r, sa.logger, "apigee_spike_arrest: rejected",
+			zap.String("rate", sa.Rate),
+		)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Retry-After", "1")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -110,6 +113,9 @@ func (sa *SpikeArrest) ServeHTTP(w http.ResponseWriter, r *http.Request, next ca
 	sa.tokens--
 	sa.mu.Unlock()
 
+	debugLog(r, sa.logger, "apigee_spike_arrest: allowed",
+		zap.String("rate", sa.Rate),
+	)
 	return next.ServeHTTP(w, r)
 }
 

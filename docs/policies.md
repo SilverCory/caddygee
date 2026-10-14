@@ -4,6 +4,63 @@ All supported Apigee policy types and their Caddy module equivalents.
 Modules live in `modules/apigeecompat/`. The transpiler maps Apigee XML policy
 types to these modules automatically during `caddygee transpile`.
 
+## Firestore integration
+
+Several modules optionally connect to Cloud Firestore for distributed state.
+Enable by configuring the `apigee_firestore` Caddy app in your global options:
+
+```json
+{
+    "apps": {
+        "apigee_firestore": {
+            "project_id": "my-gcp-project",
+            "database_id": "(default)"
+        }
+    }
+}
+```
+
+Or via the Caddyfile (place in the global options block):
+
+```caddyfile
+{
+    apigee_firestore {
+        project_id my-gcp-project
+    }
+}
+```
+
+When `apigee_firestore` is configured:
+
+| Module | Behaviour without Firestore | Behaviour with Firestore |
+|--------|----------------------------|--------------------------|
+| `apigee_verify_api_key` | Passthrough (logs warning) | Enforces — looks up key in `api_keys` collection |
+| `apigee_quota` | In-memory per-process counter | Distributed atomic counter in `quotas` collection |
+| `apigee_kvm` | Static baked-in values only | Fetches live values from `kvm` collection (5 min TTL cache) |
+
+### Firestore data model
+
+**`api_keys/{key}`** — one document per API key:
+```json
+{
+    "enabled":        true,
+    "app_id":         "my-service",
+    "quota_limit":    200,
+    "quota_interval": 1,
+    "quota_timeunit": "minute"
+}
+```
+
+**`quotas/{identifier}_{window_key}`** — quota counters (auto-created):
+```json
+{ "count": 42, "window_end": "2026-10-14T12:01:00Z" }
+```
+
+**`kvm/{map_name}`** — KVM documents (field names become flow variable names):
+```json
+{ "getAuthApiBaseUrl": "auth.example.com" }
+```
+
 ## Implementation checklist
 
 - [x] `apigee_state` — flow state initialisation (required first handler on every route)
@@ -17,9 +74,9 @@ types to these modules automatically during `caddygee transpile`.
 - [x] `apigee_spike_arrest` — per-server token-bucket rate limiting (SpikeArrest)
 - [x] `apigee_cors` — CORS response headers + OPTIONS preflight (CORS)
 - [x] `apigee_verify_api_key` — API key validation passthrough ⚠️ not enforced (VerifyAPIKey)
-- [ ] `apigee_extract_variables` — extract request values into flow variables (ExtractVariables)
-- [ ] `apigee_quota` — distributed per-key request quota (Quota)
-- [ ] `apigee_kvm` — Key-Value Map read at request time (KeyValueMapOperations)
+- [x] `apigee_extract_variables` — extract request values into flow variables (ExtractVariables)
+- [x] `apigee_quota` — per-key in-memory request quota (Quota)
+- [x] `apigee_kvm` — Key-Value Map: baked-in static values set at request time (KeyValueMapOperations)
 
 ---
 
@@ -304,40 +361,151 @@ apigee_cors {
 
 ---
 
-## `apigee_verify_api_key` ⚠️
+## `apigee_verify_api_key`
 
 **File:** `modules/apigeecompat/verify_api_key.go`
 **Apigee equivalent:** `VerifyAPIKey` policy
 **Tests:** none
-**Status: PASSTHROUGH — does not enforce API key validation**
 
-Logs a warning at startup and on every request, but calls the next handler without
-blocking. A full implementation requires a key store (Cloud Firestore or Secret
-Manager) to look up registered developer app credentials.
+Validates an API key against Firestore when the `apigee_firestore` app is configured.
+Without Firestore, falls back to passthrough mode (logs a warning, does not block).
 
-The transpiler emits a `# TODO:` comment in the Caddyfile wherever this policy
-appears so it is visible during review.
+On success, writes quota metadata into flow variables for downstream `apigee_quota`:
+- `verifyapikey.<policy_name>.app_id`
+- `verifyapikey.<policy_name>.apiproduct.developer.quota.limit`
+- `verifyapikey.<policy_name>.apiproduct.developer.quota.interval` (seconds)
+- `verifyapikey.<policy_name>.apiproduct.developer.quota.timeunit`
+
+On failure, returns 401 with a JSON fault body.
 
 ```caddyfile
 # TODO: apigee_verify_api_key not enforced — passthrough mode
 apigee_verify_api_key {
-    api_key_ref request.header.authorization
+    api_key_ref  request.header.authorization
+    policy_name  VA-ValidateServiceKeys
 }
 ```
 
 | Config field | Type | Description |
 |---|---|---|
 | `api_key_ref` | string | Apigee variable reference for where the key is read from |
+| `policy_name` | string | Used to namespace flow variables set on success (default: `VerifyAPIKey`) |
+| `collection` | string | Firestore collection name (default: `api_keys`) |
 
-**To implement enforcement:** add a `KeyStore` interface to the module, back it with
-Cloud Firestore or Secret Manager, and return 401 when the key is absent or invalid.
+API key documents in Firestore (`api_keys/{key}`):
+```json
+{ "enabled": true, "app_id": "my-app", "quota_limit": 200, "quota_interval": 1, "quota_timeunit": "minute" }
+```
 
 ---
 
-## Still unimplemented
+## `apigee_extract_variables`
 
-| Apigee policy type | Affected services | Notes |
+**File:** `modules/apigeecompat/extract_variables.go`
+**Apigee equivalent:** `ExtractVariables` policy
+**Tests:** none
+
+Extracts values from request headers or the request path using `{varname}` placeholder patterns and stores them as flow variables under a configured prefix. Wildcards (`*`) match a single path segment without capturing.
+
+```caddyfile
+# Header extraction: "Bearer abc123" → auth.clienttoken = "abc123"
+apigee_extract_variables {
+    prefix auth
+    header_pattern authorization "Bearer {clienttoken}"
+}
+
+# Path extraction: "/passkit/v1/passes/x/sn123" → applepass.serialnumber = "sn123"
+apigee_extract_variables {
+    prefix    applepass
+    path_pattern "/passkit/v1/passes/*/{serialnumber}"
+}
+```
+
+| Config field | Type | Description |
 |---|---|---|
-| `ExtractVariables` | discounts-api, mobile-passes-api | Extracts request values into flow vars; low impact — extracted vars not passed to upstream |
-| `Quota` | mobile-passes-api | Per-key distributed quota; requires Redis or Firestore counter store |
-| `KeyValueMapOperations` | profile-management-api | KVM read at runtime; values already baked in via env conditionals |
+| `prefix` | string | Namespace for extracted variables, e.g. `auth` → `auth.clienttoken` |
+| `header_pattern` | `<name> <pattern>` | Extract from a request header using `{var}` placeholders |
+| `path_pattern` | string | Extract from the request path using `{var}` placeholders; `*` matches one segment |
+| `ignore_unresolved` | bool | Silently skip when no pattern matches (default: true) |
+
+---
+
+## `apigee_quota`
+
+**File:** `modules/apigeecompat/quota.go`
+**Apigee equivalent:** `Quota` policy
+**Tests:** none
+
+Per-key quota enforcement. When `apigee_firestore` is configured, the counter is stored
+in Firestore for distributed enforcement across replicas. Without Firestore, falls back
+to an in-memory per-process sliding window.
+
+The limit and interval can be static config values or resolved at request time from flow
+variables (e.g. set by `apigee_verify_api_key`). When the quota is exceeded, returns
+`429 Too Many Requests` with a JSON fault body matching Apigee's format.
+
+```caddyfile
+# Static quota
+apigee_quota {
+    allow          10
+    interval       60
+    identifier_ref applepass.serialnumber
+}
+
+# Dynamic quota from API key metadata
+apigee_quota {
+    limit_ref      verifyapikey.VA-ValidateServiceKeys.apiproduct.developer.quota.limit
+    interval_ref   verifyapikey.VA-ValidateServiceKeys.apiproduct.developer.quota.interval
+    identifier_ref verifyapikey.VA-ValidateServiceKeys.app_id
+}
+```
+
+| Config field | Type | Description |
+|---|---|---|
+| `allow` | int | Maximum requests allowed per interval |
+| `limit_ref` | string | Flow variable that overrides `allow` at request time |
+| `interval` | int | Window size in seconds |
+| `interval_ref` | string | Flow variable that overrides `interval` at request time |
+| `identifier_ref` | string | Flow variable used as the per-key identifier; if empty, quota is global |
+| `collection` | string | Firestore collection name (default: `quotas`) |
+
+---
+
+## `apigee_kvm`
+
+**File:** `modules/apigeecompat/kvm.go`
+**Apigee equivalent:** `KeyValueMapOperations` policy
+**Tests:** none
+
+Writes key-value entries into the request flow state so downstream handlers
+(e.g. `apigee_service_callout`) can reference them via `{flowvar.X}`.
+
+**Static mode** (default): values are baked in at transpile time from `<InitialEntries>`.
+
+**Live mode** (when `apigee_firestore` is configured and `map_name` is set): values are
+fetched from Firestore at request time with a 5-minute TTL cache. Live values overlay
+static entries. This allows KVM values to be updated without redeploying caddygee.
+
+```caddyfile
+# Static (transpiler default)
+apigee_kvm {
+    entry getAuthApiBaseUrl "auth.example.com"
+}
+
+# Live Firestore (add map_name to enable)
+apigee_kvm {
+    map_name KVM-Prod-AuthApiBaseUrl
+    entry    getAuthApiBaseUrl "auth.example.com"
+}
+```
+
+Firestore document (`kvm/KVM-Prod-AuthApiBaseUrl`):
+```json
+{ "getAuthApiBaseUrl": "auth.example.com" }
+```
+
+| Config field | Type | Description |
+|---|---|---|
+| `entry` | `<varname> <value>` | Static flow variable name and value (baked in at transpile time) |
+| `map_name` | string | Firestore document ID in the KVM collection; enables live mode |
+| `collection` | string | Firestore collection name (default: `kvm`) |

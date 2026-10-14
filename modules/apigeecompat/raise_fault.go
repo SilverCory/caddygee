@@ -8,6 +8,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -23,6 +24,8 @@ type RaiseFault struct {
 	StatusCode int `json:"status_code,omitempty"`
 	// Body is the response body to send.
 	Body string `json:"body,omitempty"`
+
+	logger *zap.Logger
 }
 
 // CaddyModule returns the Caddy module metadata.
@@ -34,7 +37,8 @@ func (RaiseFault) CaddyModule() caddy.ModuleInfo {
 }
 
 // Provision validates and sets defaults.
-func (rf *RaiseFault) Provision(_ caddy.Context) error {
+func (rf *RaiseFault) Provision(ctx caddy.Context) error {
+	rf.logger = ctx.Logger()
 	if rf.StatusCode == 0 {
 		rf.StatusCode = http.StatusInternalServerError
 	}
@@ -45,7 +49,10 @@ func (rf *RaiseFault) Provision(_ caddy.Context) error {
 }
 
 // ServeHTTP writes the fault response immediately without calling next.
-func (rf RaiseFault) ServeHTTP(w http.ResponseWriter, _ *http.Request, _ caddyhttp.Handler) error {
+func (rf RaiseFault) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
+	debugLog(r, rf.logger, "apigee_raise_fault",
+		zap.Int("status_code", rf.StatusCode),
+	)
 	if rf.Body != "" {
 		w.Header().Set("Content-Type", "application/json")
 	}

@@ -156,10 +156,46 @@ See [`docs/policies.md`](docs/policies.md) for full reference.
 | `apigee_service_callout` | `ServiceCallout` | Implemented |
 | `apigee_spike_arrest` | `SpikeArrest` | Implemented |
 | `apigee_cors` | `CORS` | Implemented |
-| `apigee_verify_api_key` | `VerifyAPIKey` | Passthrough (not enforced) |
-| — | `ExtractVariables` | Not implemented |
-| — | `Quota` | Not implemented |
-| — | `KeyValueMapOperations` | Not implemented |
+| `apigee_verify_api_key` | `VerifyAPIKey` | Enforced via Firestore; passthrough without Firestore |
+| `apigee_extract_variables` | `ExtractVariables` | Implemented |
+| `apigee_quota` | `Quota` | Distributed via Firestore; in-memory fallback |
+| `apigee_kvm` | `KeyValueMapOperations` | Live Firestore reads; static baked-in fallback |
+
+## Firestore Integration
+
+Several modules use Cloud Firestore for distributed state. Enable by adding the `apigee_firestore` app to your Caddy JSON config:
+
+```json
+{
+    "apps": {
+        "apigee_firestore": {
+            "project_id": "my-gcp-project"
+        }
+    }
+}
+```
+
+| Module | Without Firestore | With Firestore |
+|--------|------------------|----------------|
+| `apigee_verify_api_key` | Passthrough (logs warning) | Enforces — looks up key in `api_keys` collection |
+| `apigee_quota` | In-memory per-process counter | Distributed atomic counter in `quotas` collection |
+| `apigee_kvm` | Static baked-in values | Live values fetched from `kvm` collection (5 min cache) |
+
+### Required Firestore collections
+
+**`api_keys/{key}`**
+```json
+{ "enabled": true, "app_id": "my-service", "quota_limit": 200, "quota_interval": 1, "quota_timeunit": "minute" }
+```
+
+**`kvm/{map_name}`**
+```json
+{ "getAuthApiBaseUrl": "auth.example.com" }
+```
+
+**`quotas/`** — auto-created by the quota module; no manual setup needed.
+
+The caddygee Cloud Run service account needs `roles/datastore.user` on the GCP project.
 
 ## Architecture Notes
 

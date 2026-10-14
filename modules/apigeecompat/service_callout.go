@@ -13,6 +13,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -37,6 +38,7 @@ type ServiceCallout struct {
 
 	// client is the shared HTTP client constructed during Provision.
 	client *http.Client
+	logger *zap.Logger
 }
 
 // CaddyModule returns the Caddy module metadata.
@@ -48,7 +50,8 @@ func (ServiceCallout) CaddyModule() caddy.ModuleInfo {
 }
 
 // Provision validates and sets defaults.
-func (s *ServiceCallout) Provision(_ caddy.Context) error {
+func (s *ServiceCallout) Provision(ctx caddy.Context) error {
+	s.logger = ctx.Logger()
 	if s.TargetURL == "" {
 		return fmt.Errorf("apigee_service_callout: target_url is required")
 	}
@@ -86,6 +89,12 @@ func (s *ServiceCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, next 
 		return fmt.Errorf("apigee_service_callout: resolved target_url has invalid scheme: %q", targetURL)
 	}
 
+	debugLog(r, s.logger, "apigee_service_callout: executing",
+		zap.String("method", s.Method),
+		zap.String("url", targetURL),
+		zap.String("response_var", s.ResponseVar),
+	)
+
 	var bodyReader io.Reader
 	if s.RequestBodyVar != "" {
 		if bodyStr := fs.GetString(s.RequestBodyVar); bodyStr != "" {
@@ -120,6 +129,12 @@ func (s *ServiceCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, next 
 	fs.Set(prefix+".content", string(body))
 	fs.Set(prefix+".status", resp.Status)
 	fs.Set(prefix+".statusCode", fmt.Sprintf("%d", resp.StatusCode))
+
+	debugLog(r, s.logger, "apigee_service_callout: response",
+		zap.String("url", targetURL),
+		zap.Int("status", resp.StatusCode),
+		zap.String("response_var", prefix),
+	)
 
 	return next.ServeHTTP(w, r)
 }

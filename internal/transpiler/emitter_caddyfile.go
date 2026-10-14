@@ -288,6 +288,71 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 				return
 			}
 		}
+		// apigee_extract_variables — emit prefix + header_pattern / path_pattern subdirectives.
+		if shortName == "apigee_extract_variables" && len(v.Config) > 0 {
+			var cfg struct {
+				Prefix         string            `json:"prefix,omitempty"`
+				HeaderPatterns map[string]string `json:"header_patterns,omitempty"`
+				PathPatterns   []string          `json:"path_patterns,omitempty"`
+			}
+			if err := json.Unmarshal(v.Config, &cfg); err == nil {
+				fmt.Fprintf(b, "%s%s {\n", indent, shortName)
+				if cfg.Prefix != "" {
+					fmt.Fprintf(b, "%s\tprefix %s\n", indent, cfg.Prefix)
+				}
+				// Sort header keys for deterministic output.
+				hkeys := make([]string, 0, len(cfg.HeaderPatterns))
+				for k := range cfg.HeaderPatterns {
+					hkeys = append(hkeys, k)
+				}
+				sort.Strings(hkeys)
+				for _, k := range hkeys {
+					fmt.Fprintf(b, "%s\theader_pattern %s %s\n", indent, k, jsonStringLiteral(cfg.HeaderPatterns[k]))
+				}
+				for _, p := range cfg.PathPatterns {
+					fmt.Fprintf(b, "%s\tpath_pattern %s\n", indent, jsonStringLiteral(p))
+				}
+				fmt.Fprintf(b, "%s}\n", indent)
+				return
+			}
+		}
+		// apigee_quota — emit allow, interval, identifier_ref subdirectives.
+		if shortName == "apigee_quota" && len(v.Config) > 0 {
+			var cfg struct {
+				Allow         int    `json:"allow"`
+				Interval      int    `json:"interval"`
+				IdentifierRef string `json:"identifier_ref,omitempty"`
+			}
+			if err := json.Unmarshal(v.Config, &cfg); err == nil && cfg.Allow > 0 {
+				fmt.Fprintf(b, "%s%s {\n", indent, shortName)
+				fmt.Fprintf(b, "%s\tallow %d\n", indent, cfg.Allow)
+				fmt.Fprintf(b, "%s\tinterval %d\n", indent, cfg.Interval)
+				if cfg.IdentifierRef != "" {
+					fmt.Fprintf(b, "%s\tidentifier_ref %s\n", indent, cfg.IdentifierRef)
+				}
+				fmt.Fprintf(b, "%s}\n", indent)
+				return
+			}
+		}
+		// apigee_kvm — emit entry subdirectives.
+		if shortName == "apigee_kvm" && len(v.Config) > 0 {
+			var cfg struct {
+				Entries map[string]string `json:"entries,omitempty"`
+			}
+			if err := json.Unmarshal(v.Config, &cfg); err == nil && len(cfg.Entries) > 0 {
+				fmt.Fprintf(b, "%s%s {\n", indent, shortName)
+				ekeys := make([]string, 0, len(cfg.Entries))
+				for k := range cfg.Entries {
+					ekeys = append(ekeys, k)
+				}
+				sort.Strings(ekeys)
+				for _, k := range ekeys {
+					fmt.Fprintf(b, "%s\tentry %s %s\n", indent, k, jsonStringLiteral(cfg.Entries[k]))
+				}
+				fmt.Fprintf(b, "%s}\n", indent)
+				return
+			}
+		}
 		// apigee_verify_api_key (passthrough) — emit a TODO comment.
 		if shortName == "apigee_verify_api_key" && len(v.Config) > 0 {
 			var cfg struct {

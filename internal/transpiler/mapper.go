@@ -459,6 +459,30 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
+	case "ExtractVariables":
+		cfg := buildExtractVariablesConfig(pol)
+		raw, _ := json.Marshal(cfg)
+		return PolicyHandler{
+			Module:     "http.handlers.apigee_extract_variables",
+			PolicyName: pol.Name,
+			Config:     raw,
+		}
+	case "Quota":
+		cfg := buildQuotaConfig(pol)
+		raw, _ := json.Marshal(cfg)
+		return PolicyHandler{
+			Module:     "http.handlers.apigee_quota",
+			PolicyName: pol.Name,
+			Config:     raw,
+		}
+	case "KeyValueMapOperations":
+		cfg := buildKVMConfig(pol)
+		raw, _ := json.Marshal(cfg)
+		return PolicyHandler{
+			Module:     "http.handlers.apigee_kvm",
+			PolicyName: pol.Name,
+			Config:     raw,
+		}
 	default:
 		return PolicyHandler{
 			Module:     "http.handlers.apigee_unknown",
@@ -645,6 +669,88 @@ func buildVerifyAPIKeyConfig(pol apigee.Policy) verifyAPIKeyConfig {
 	return verifyAPIKeyConfig{
 		APIKeyRef: vak.APIKey.Ref,
 	}
+}
+
+// extractVariablesConfig is the JSON shape consumed by apigee_extract_variables.
+type extractVariablesConfig struct {
+	Prefix           string            `json:"prefix,omitempty"`
+	HeaderPatterns   map[string]string `json:"header_patterns,omitempty"`
+	PathPatterns     []string          `json:"path_patterns,omitempty"`
+	IgnoreUnresolved bool              `json:"ignore_unresolved,omitempty"`
+}
+
+func buildExtractVariablesConfig(pol apigee.Policy) extractVariablesConfig {
+	ev := pol.ExtractVariables
+	cfg := extractVariablesConfig{
+		Prefix:           ev.VariablePrefix,
+		IgnoreUnresolved: ev.IgnoreUnresolvedVariables,
+	}
+	for _, h := range ev.Headers {
+		if cfg.HeaderPatterns == nil {
+			cfg.HeaderPatterns = make(map[string]string)
+		}
+		cfg.HeaderPatterns[strings.ToLower(h.Name)] = h.Pattern.Value
+	}
+	for _, v := range ev.Variables {
+		_ = v.Name // the variable name is the source (e.g. "proxy.pathsuffix")
+		cfg.PathPatterns = append(cfg.PathPatterns, v.Pattern.Value)
+	}
+	return cfg
+}
+
+// quotaConfig is the JSON shape consumed by apigee_quota.
+type quotaConfig struct {
+	Allow         int    `json:"allow"`
+	Interval      int    `json:"interval"` // in seconds
+	IdentifierRef string `json:"identifier_ref,omitempty"`
+}
+
+func buildQuotaConfig(pol apigee.Policy) quotaConfig {
+	q := pol.Quota
+	intervalSecs := q.Interval
+	switch strings.ToLower(strings.TrimSpace(q.TimeUnit)) {
+	case "minute":
+		intervalSecs = q.Interval * 60
+	case "hour":
+		intervalSecs = q.Interval * 3600
+	case "day":
+		intervalSecs = q.Interval * 86400
+	}
+	return quotaConfig{
+		Allow:         q.Allow.Count,
+		Interval:      intervalSecs,
+		IdentifierRef: q.Identifier.Ref,
+	}
+}
+
+// kvmConfig is the JSON shape consumed by apigee_kvm.
+type kvmConfig struct {
+	Entries map[string]string `json:"entries,omitempty"`
+}
+
+func buildKVMConfig(pol apigee.Policy) kvmConfig {
+	kvm := pol.KVM
+	cfg := kvmConfig{Entries: make(map[string]string)}
+	// Build a key→value lookup from InitialEntries.
+	entryMap := make(map[string]string)
+	for _, entry := range kvm.InitialEntries {
+		if len(entry.Key.Parameters) > 0 {
+			entryMap[entry.Key.Parameters[0]] = entry.Value
+		}
+	}
+	// For each Get, assign the looked-up value to the assignTo flow variable.
+	for _, get := range kvm.Gets {
+		if get.AssignTo == "" {
+			continue
+		}
+		if len(get.Key.Parameters) > 0 {
+			key := get.Key.Parameters[0]
+			if val, ok := entryMap[key]; ok {
+				cfg.Entries[get.AssignTo] = val
+			}
+		}
+	}
+	return cfg
 }
 
 // resolveResourceURL reads a jsc:// resource file from the bundle's resources/jsc/ directory.

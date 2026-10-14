@@ -147,6 +147,15 @@ type Policy struct {
 
 	// VerifyAPIKey fields
 	VerifyAPIKey *VerifyAPIKeyPolicy
+
+	// ExtractVariables fields
+	ExtractVariables *ExtractVariablesPolicy
+
+	// Quota fields
+	Quota *QuotaPolicy
+
+	// KeyValueMapOperations fields
+	KVM *KVMPolicy
 }
 
 // AssignMessage holds parsed config for an <AssignMessage> policy.
@@ -275,4 +284,74 @@ type VerifyAPIKeyPolicy struct {
 // VerifyAPIKeyRef holds the ref attribute for the API key source.
 type VerifyAPIKeyRef struct {
 	Ref string `xml:"ref,attr"`
+}
+
+// ExtractVariablesPolicy holds parsed config for an <ExtractVariables> policy.
+type ExtractVariablesPolicy struct {
+	VariablePrefix           string                  `xml:"VariablePrefix"`
+	IgnoreUnresolvedVariables bool                   `xml:"IgnoreUnresolvedVariables"`
+	Headers                  []EVHeader              `xml:"Header"`
+	Variables                []EVVariable            `xml:"Variable"`
+}
+
+// EVHeader is a header extraction rule: header name + pattern with {var} placeholders.
+type EVHeader struct {
+	Name    string      `xml:"name,attr"`
+	Pattern EVPattern   `xml:"Pattern"`
+}
+
+// EVVariable is a path/variable extraction rule.
+type EVVariable struct {
+	Name    string      `xml:"name,attr"`
+	Pattern EVPattern   `xml:"Pattern"`
+}
+
+// EVPattern holds the extraction pattern and case-sensitivity flag.
+type EVPattern struct {
+	IgnoreCase bool   `xml:"ignoreCase,attr"`
+	Value      string `xml:",chardata"`
+}
+
+// QuotaPolicy holds parsed config for a <Quota> policy.
+type QuotaPolicy struct {
+	Allow       QuotaAllow `xml:"Allow"`
+	Interval    int        `xml:"Interval"`
+	TimeUnit    string     `xml:"TimeUnit"` // "minute", "hour", "day"
+	Identifier  QuotaRef   `xml:"Identifier"`
+	Distributed bool       `xml:"Distributed"`
+}
+
+// QuotaAllow holds the count limit.
+type QuotaAllow struct {
+	Count int `xml:"count,attr"`
+}
+
+// QuotaRef holds a ref attribute pointing to a flow variable.
+type QuotaRef struct {
+	Ref string `xml:"ref,attr"`
+}
+
+// KVMPolicy holds parsed config for a <KeyValueMapOperations> policy.
+type KVMPolicy struct {
+	MapIdentifier string      `xml:"mapIdentifier,attr"`
+	InitialEntries []KVMEntry `xml:"InitialEntries>Entry"`
+	Gets          []KVMGet   `xml:"Get"`
+}
+
+// KVMEntry is a static key-value pair in the map's initial entries.
+type KVMEntry struct {
+	Key   KVMKey   `xml:"Key"`
+	Value string   `xml:"Value"`
+}
+
+// KVMKey holds the key parameter(s) for a KVM entry or get operation.
+type KVMKey struct {
+	Parameters []string `xml:"Parameter"`
+}
+
+// KVMGet is a Get operation that reads a key and assigns it to a flow variable.
+type KVMGet struct {
+	AssignTo string `xml:"assignTo,attr"`
+	Index    int    `xml:"index,attr"`
+	Key      KVMKey `xml:"Key"`
 }

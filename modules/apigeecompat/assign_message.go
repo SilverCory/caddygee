@@ -11,6 +11,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -31,6 +32,8 @@ type AssignMessage struct {
 	SetBody string `json:"set_body,omitempty"`
 	// Phase is "request" (default) or "response".
 	Phase string `json:"phase,omitempty"`
+
+	logger *zap.Logger
 }
 
 // CaddyModule returns the Caddy module metadata.
@@ -42,7 +45,8 @@ func (AssignMessage) CaddyModule() caddy.ModuleInfo {
 }
 
 // Provision validates and sets defaults.
-func (a *AssignMessage) Provision(_ caddy.Context) error {
+func (a *AssignMessage) Provision(ctx caddy.Context) error {
+	a.logger = ctx.Logger()
 	if a.Phase == "" {
 		a.Phase = "request"
 	}
@@ -55,6 +59,13 @@ func (a *AssignMessage) Provision(_ caddy.Context) error {
 // ServeHTTP applies mutations to the request or response.
 func (a AssignMessage) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	fs, _ := GetFlowState(r.Context()) // nil-safe: resolve functions check for nil
+
+	debugLog(r, a.logger, "apigee_assign_message",
+		zap.String("phase", a.Phase),
+		zap.Any("set_headers", a.SetHeaders),
+		zap.Strings("remove_headers", a.RemoveHeaders),
+		zap.Any("add_headers", a.AddHeaders),
+	)
 
 	if a.Phase == "request" {
 		a.applyToRequest(r, fs)

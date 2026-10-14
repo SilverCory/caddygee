@@ -12,6 +12,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -31,7 +32,8 @@ type Conditional struct {
 	// Uses Caddy's inline module loading (handler key identifies the module).
 	Inner json.RawMessage `json:"inner" caddy:"namespace=http.handlers inline_key=handler"`
 
-	inner caddyhttp.MiddlewareHandler
+	inner  caddyhttp.MiddlewareHandler
+	logger *zap.Logger
 }
 
 // CaddyModule returns the Caddy module metadata.
@@ -44,6 +46,7 @@ func (Conditional) CaddyModule() caddy.ModuleInfo {
 
 // Provision decodes and provisions the inner handler.
 func (c *Conditional) Provision(ctx caddy.Context) error {
+	c.logger = ctx.Logger()
 	if c.Condition == "" {
 		return fmt.Errorf("apigee_conditional: condition is required")
 	}
@@ -76,7 +79,12 @@ func (c *Conditional) Provision(ctx caddy.Context) error {
 // ServeHTTP evaluates the condition and conditionally invokes the inner handler.
 func (c *Conditional) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	fs, _ := GetFlowState(r.Context())
-	if evalCondition(c.Condition, r, fs) {
+	matched := evalCondition(c.Condition, r, fs)
+	debugLog(r, c.logger, "apigee_conditional: evaluated",
+		zap.String("condition", c.Condition),
+		zap.Bool("matched", matched),
+	)
+	if matched {
 		return c.inner.ServeHTTP(w, r, next)
 	}
 	return next.ServeHTTP(w, r)
@@ -287,16 +295,24 @@ func matchPath(path, pattern string) bool {
 }
 
 func globMatch(pattern, s string) bool {
-	if pattern == "**" {
-		return true
-	}
 	if pattern == "" {
 		return s == ""
 	}
 	if pattern[0] == '*' {
 		if len(pattern) > 1 && pattern[1] == '*' {
-			// ** matches any
-			return strings.HasPrefix(s, "/") || s == ""
+			// ** matches zero or more path segments (any suffix).
+			rest := strings.TrimLeft(pattern[2:], "/")
+			if rest == "" {
+				// Pattern ends with ** — matches everything remaining.
+				return true
+			}
+			// Try matching the rest of the pattern at every position in s.
+			for i := 0; i <= len(s); i++ {
+				if globMatch(rest, s[i:]) {
+					return true
+				}
+			}
+			return false
 		}
 		// * matches up to next /
 		rest := pattern[1:]
@@ -516,7 +532,82 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 				}
 				obj += `}`
 				c.Inner = json.RawMessage(obj)
-			case "raw_json":
+			case "apigee_extract_variables":
+			var prefix string
+			headerPatterns := make(map[string]string)
+			var pathPatterns []string
+			for h.NextBlock(1) {
+				switch h.Val() {
+				case "prefix":
+					if h.NextArg() {
+						prefix = h.Val()
+					}
+				case "header_pattern":
+					args := h.RemainingArgs()
+					if len(args) >= 2 {
+						headerPatterns[args[0]] = args[1]
+					}
+				case "path_pattern":
+					if h.NextArg() {
+						pathPatterns = append(pathPatterns, h.Val())
+					}
+				default:
+					_ = h.RemainingArgs()
+				}
+			}
+			obj := `{"handler":"apigee_extract_variables","ignore_unresolved":true`
+			if prefix != "" {
+				obj += fmt.Sprintf(`,"prefix":%s`, jsonString(prefix))
+			}
+			if len(headerPatterns) > 0 {
+				hpBytes, _ := json.Marshal(headerPatterns)
+				obj += fmt.Sprintf(`,"header_patterns":%s`, string(hpBytes))
+			}
+			if len(pathPatterns) > 0 {
+				ppBytes, _ := json.Marshal(pathPatterns)
+				obj += fmt.Sprintf(`,"path_patterns":%s`, string(ppBytes))
+			}
+			obj += `}`
+			c.Inner = json.RawMessage(obj)
+		case "apigee_quota":
+			var allow, interval int
+			var identifierRef string
+			for h.NextBlock(1) {
+				switch h.Val() {
+				case "allow":
+					if h.NextArg() {
+						fmt.Sscanf(h.Val(), "%d", &allow)
+					}
+				case "interval":
+					if h.NextArg() {
+						fmt.Sscanf(h.Val(), "%d", &interval)
+					}
+				case "identifier_ref":
+					if h.NextArg() {
+						identifierRef = h.Val()
+					}
+				}
+			}
+			obj := fmt.Sprintf(`{"handler":"apigee_quota","allow":%d,"interval":%d`, allow, interval)
+			if identifierRef != "" {
+				obj += fmt.Sprintf(`,"identifier_ref":%s`, jsonString(identifierRef))
+			}
+			obj += `}`
+			c.Inner = json.RawMessage(obj)
+		case "apigee_kvm":
+			entries := make(map[string]string)
+			for h.NextBlock(1) {
+				switch h.Val() {
+				case "entry":
+					args := h.RemainingArgs()
+					if len(args) >= 2 {
+						entries[args[0]] = args[1]
+					}
+				}
+			}
+			entriesBytes, _ := json.Marshal(entries)
+			c.Inner = json.RawMessage(fmt.Sprintf(`{"handler":"apigee_kvm","entries":%s}`, string(entriesBytes)))
+		case "raw_json":
 				// The transpiler bakes full JSON into a raw_json subdirective so
 				// that all handler configs survive the Caddyfile round-trip intact.
 				if len(innerArgs) == 0 {

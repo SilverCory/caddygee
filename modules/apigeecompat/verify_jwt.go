@@ -17,6 +17,7 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -44,10 +45,12 @@ type VerifyJWT struct {
 	// PolicyName is used to namespace the claim flow variables.
 	PolicyName string `json:"policy_name"`
 
-	rsaKey     *rsa.PublicKey
-	jwksMu     sync.RWMutex
-	jwksKeys   *jose.JSONWebKeySet
+	rsaKey      *rsa.PublicKey
+	jwksMu      sync.RWMutex
+	jwksKeys    *jose.JSONWebKeySet
 	jwksFetched time.Time
+	logger      *zap.Logger
+	jwksClient  *http.Client
 }
 
 // CaddyModule returns the Caddy module metadata.
@@ -59,7 +62,8 @@ func (VerifyJWT) CaddyModule() caddy.ModuleInfo {
 }
 
 // Provision parses and validates configuration.
-func (v *VerifyJWT) Provision(_ caddy.Context) error {
+func (v *VerifyJWT) Provision(ctx caddy.Context) error {
+	v.logger = ctx.Logger()
 	if v.PolicyName == "" {
 		return fmt.Errorf("apigee_verify_jwt: policy_name is required")
 	}
@@ -81,6 +85,8 @@ func (v *VerifyJWT) Provision(_ caddy.Context) error {
 		}
 		v.rsaKey = key
 	}
+	// C3: provisioned HTTP client with timeout for JWKS fetches.
+	v.jwksClient = &http.Client{Timeout: 10 * time.Second}
 	return nil
 }
 
@@ -88,35 +94,69 @@ func (v *VerifyJWT) Provision(_ caddy.Context) error {
 func (v *VerifyJWT) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	rawToken := extractBearer(r)
 	if rawToken == "" {
+		debugLog(r, v.logger, "apigee_verify_jwt: rejected — no bearer token",
+			zap.String("policy", v.PolicyName))
 		return v.unauthorized(w, "missing or malformed Authorization header")
 	}
 
 	key, err := v.resolveKey(rawToken)
 	if err != nil {
-		return v.unauthorized(w, "could not resolve JWT signing key: "+err.Error())
+		debugLog(r, v.logger, "apigee_verify_jwt: rejected — key resolution failed",
+			zap.String("policy", v.PolicyName), zap.Error(err))
+		return v.unauthorized(w, "JWT validation failed")
 	}
 
 	alg := jose.SignatureAlgorithm(strings.ToUpper(v.Algorithm))
 	tok, err := jwt.ParseSigned(rawToken, []jose.SignatureAlgorithm{alg})
 	if err != nil {
-		return v.unauthorized(w, "invalid JWT: "+err.Error())
+		debugLog(r, v.logger, "apigee_verify_jwt: rejected — parse failed",
+			zap.String("policy", v.PolicyName), zap.Error(err))
+		return v.unauthorized(w, "JWT validation failed")
 	}
 
 	var claims map[string]any
 	if err := tok.Claims(key, &claims); err != nil {
-		return v.unauthorized(w, "JWT verification failed: "+err.Error())
+		debugLog(r, v.logger, "apigee_verify_jwt: rejected — signature invalid",
+			zap.String("policy", v.PolicyName), zap.Error(err))
+		return v.unauthorized(w, "JWT validation failed")
 	}
+
+	now := time.Now()
 
 	// Validate standard claims.
 	if v.Issuer != "" {
 		if iss, _ := claims["iss"].(string); iss != v.Issuer {
-			return v.unauthorized(w, fmt.Sprintf("JWT issuer mismatch: got %q, want %q", iss, v.Issuer))
+			debugLog(r, v.logger, "apigee_verify_jwt: rejected — issuer mismatch",
+				zap.String("policy", v.PolicyName),
+				zap.String("got", iss), zap.String("want", v.Issuer))
+			return v.unauthorized(w, "JWT validation failed")
+		}
+	}
+	// C2: enforce audience when configured.
+	if v.Audience != "" {
+		if !claimMatchesAudience(claims["aud"], v.Audience) {
+			debugLog(r, v.logger, "apigee_verify_jwt: rejected — audience mismatch",
+				zap.String("policy", v.PolicyName),
+				zap.Any("got", claims["aud"]), zap.String("want", v.Audience))
+			return v.unauthorized(w, "JWT validation failed")
+		}
+	}
+	// M1: enforce not-before.
+	if nbf, ok := claims["nbf"]; ok {
+		if n, ok := nbf.(float64); ok {
+			if now.Before(time.Unix(int64(n), 0)) {
+				debugLog(r, v.logger, "apigee_verify_jwt: rejected — token not yet valid",
+					zap.String("policy", v.PolicyName))
+				return v.unauthorized(w, "JWT is not yet valid")
+			}
 		}
 	}
 	if exp, ok := claims["exp"]; ok {
 		switch e := exp.(type) {
 		case float64:
-			if time.Unix(int64(e), 0).Before(time.Now()) {
+			if time.Unix(int64(e), 0).Before(now) {
+				debugLog(r, v.logger, "apigee_verify_jwt: rejected — token expired",
+					zap.String("policy", v.PolicyName))
 				return v.unauthorized(w, "JWT is expired")
 			}
 		}
@@ -130,6 +170,12 @@ func (v *VerifyJWT) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		}
 	}
 
+	sub, _ := claims["sub"].(string)
+	debugLog(r, v.logger, "apigee_verify_jwt: accepted",
+		zap.String("policy", v.PolicyName),
+		zap.String("sub", sub),
+		zap.String("iss", fmt.Sprintf("%v", claims["iss"])),
+	)
 	return next.ServeHTTP(w, r)
 }
 
@@ -162,9 +208,9 @@ func (v *VerifyJWT) fetchJWKSKey(rawToken string) (any, error) {
 		defer v.jwksMu.Unlock()
 		// Double-check after acquiring write lock.
 		if v.jwksKeys == nil || time.Since(v.jwksFetched) > 5*time.Minute {
-			resp, err := http.Get(v.JWKSURI) //nolint:noctx
+			resp, err := v.jwksClient.Get(v.JWKSURI)
 			if err != nil {
-				return nil, fmt.Errorf("fetching JWKS from %q: %w", v.JWKSURI, err)
+				return nil, fmt.Errorf("fetching JWKS: %w", err)
 			}
 			defer resp.Body.Close()
 			var fresh jose.JSONWebKeySet
@@ -205,6 +251,22 @@ func (v *VerifyJWT) fetchJWKSKey(rawToken string) (any, error) {
 		}
 	}
 	return nil, fmt.Errorf("no RSA key found in JWKS")
+}
+
+// claimMatchesAudience checks the "aud" claim against the configured audience.
+// The aud claim may be a string or a []interface{} (JSON array of strings).
+func claimMatchesAudience(aud any, want string) bool {
+	switch v := aud.(type) {
+	case string:
+		return v == want
+	case []interface{}:
+		for _, a := range v {
+			if s, ok := a.(string); ok && s == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func parseRSAPublicKey(pemStr string) (*rsa.PublicKey, error) {

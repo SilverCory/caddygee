@@ -9,6 +9,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/idtoken"
 )
@@ -33,6 +34,7 @@ type GoogleAuth struct {
 	Audience string `json:"audience"`
 
 	tokenSource oauth2.TokenSource
+	logger      *zap.Logger
 }
 
 // CaddyModule returns the Caddy module metadata.
@@ -44,7 +46,8 @@ func (GoogleAuth) CaddyModule() caddy.ModuleInfo {
 }
 
 // Provision validates config and initialises the token source.
-func (g *GoogleAuth) Provision(_ caddy.Context) error {
+func (g *GoogleAuth) Provision(ctx caddy.Context) error {
+	g.logger = ctx.Logger()
 	if g.Audience == "" {
 		return fmt.Errorf("apigee_google_auth: audience is required")
 	}
@@ -63,6 +66,10 @@ func (g *GoogleAuth) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 		return fmt.Errorf("apigee_google_auth: fetching ID token for %q: %w", g.Audience, err)
 	}
 	r.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	debugLog(r, g.logger, "apigee_google_auth: injected ID token",
+		zap.String("audience", g.Audience),
+		zap.Time("token_expiry", tok.Expiry),
+	)
 	return next.ServeHTTP(w, r)
 }
 

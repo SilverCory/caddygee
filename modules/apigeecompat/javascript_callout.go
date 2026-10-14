@@ -15,6 +15,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/dop251/goja"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -46,6 +47,7 @@ type JavaScriptCallout struct {
 	program  *goja.Program   // compiled once at Provision; read-only afterwards
 	libProgs []*goja.Program // library programs run in each new runtime
 	pool     sync.Pool       // pool of *goja.Runtime
+	logger   *zap.Logger
 }
 
 // CaddyModule returns the Caddy module metadata.
@@ -57,7 +59,8 @@ func (JavaScriptCallout) CaddyModule() caddy.ModuleInfo {
 }
 
 // Provision compiles the script source, loads library files, and initialises the runtime pool.
-func (j *JavaScriptCallout) Provision(_ caddy.Context) error {
+func (j *JavaScriptCallout) Provision(ctx caddy.Context) error {
+	j.logger = ctx.Logger()
 	if j.Source == "" {
 		return fmt.Errorf("apigee_javascript_callout: source is required")
 	}
@@ -210,6 +213,10 @@ func (j *JavaScriptCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 		return fmt.Errorf("apigee_javascript_callout: setting context: %w", err)
 	}
 
+	debugLog(r, j.logger, "apigee_javascript_callout: executing",
+		zap.Int("timeout_ms", j.TimeoutMs),
+	)
+
 	// Run the script in a separate goroutine so we can interrupt it on timeout.
 	// goja.Runtime.Interrupt() is safe to call from a different goroutine.
 	done := make(chan error, 1)
@@ -222,11 +229,18 @@ func (j *JavaScriptCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 	select {
 	case err := <-done:
 		if err != nil {
+			debugLog(r, j.logger, "apigee_javascript_callout: script error",
+				zap.Error(err),
+			)
 			return fmt.Errorf("apigee_javascript_callout: script error: %w", err)
 		}
+		debugLog(r, j.logger, "apigee_javascript_callout: script completed")
 	case <-time.After(timeout):
 		vm.Interrupt(fmt.Errorf("script exceeded timeout of %dms", j.TimeoutMs))
 		<-done // drain the goroutine
+		debugLog(r, j.logger, "apigee_javascript_callout: script timed out",
+			zap.Int("timeout_ms", j.TimeoutMs),
+		)
 		return fmt.Errorf("apigee_javascript_callout: script timed out after %dms", j.TimeoutMs)
 	}
 
