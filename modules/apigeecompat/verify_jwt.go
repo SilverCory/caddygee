@@ -21,7 +21,7 @@ import (
 )
 
 func init() {
-	caddy.RegisterModule(VerifyJWT{})
+	caddy.RegisterModule(new(VerifyJWT))
 	httpcaddyfile.RegisterHandlerDirective("verify_jwt", parseVerifyJWTCaddyfile)
 }
 
@@ -54,7 +54,7 @@ type VerifyJWT struct {
 }
 
 // CaddyModule returns the Caddy module metadata.
-func (VerifyJWT) CaddyModule() caddy.ModuleInfo {
+func (*VerifyJWT) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.verify_jwt",
 		New: func() caddy.Module { return new(VerifyJWT) },
@@ -337,7 +337,7 @@ func parseVerifyJWTCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandle
 
 // Interface guards.
 var (
-	_ caddy.Module                = VerifyJWT{}
+	_ caddy.Module                = (*VerifyJWT)(nil)
 	_ caddy.Provisioner           = (*VerifyJWT)(nil)
 	_ caddyhttp.MiddlewareHandler = (*VerifyJWT)(nil)
 	_ caddyfile.Unmarshaler       = (*VerifyJWT)(nil)

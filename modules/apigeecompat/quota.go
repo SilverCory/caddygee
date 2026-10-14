@@ -20,7 +20,7 @@ import (
 )
 
 func init() {
-	caddy.RegisterModule(Quota{})
+	caddy.RegisterModule(new(Quota))
 	httpcaddyfile.RegisterHandlerDirective("quota", parseQuotaCaddyfile)
 }
 
@@ -81,7 +81,7 @@ type quotaBucket struct {
 }
 
 // CaddyModule returns the Caddy module metadata.
-func (Quota) CaddyModule() caddy.ModuleInfo {
+func (*Quota) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.quota",
 		New: func() caddy.Module { return new(Quota) },
@@ -314,7 +314,7 @@ func parseQuotaCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, e
 
 // Interface guards.
 var (
-	_ caddy.Module                = Quota{}
+	_ caddy.Module                = (*Quota)(nil)
 	_ caddy.Provisioner           = (*Quota)(nil)
 	_ caddyhttp.MiddlewareHandler = (*Quota)(nil)
 	_ caddyfile.Unmarshaler       = (*Quota)(nil)

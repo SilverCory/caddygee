@@ -16,7 +16,7 @@ import (
 )
 
 func init() {
-	caddy.RegisterModule(SpikeArrest{})
+	caddy.RegisterModule(new(SpikeArrest))
 	httpcaddyfile.RegisterHandlerDirective("spike_arrest", parseSpikeArrestCaddyfile)
 }
 
@@ -39,7 +39,7 @@ type SpikeArrest struct {
 }
 
 // CaddyModule returns the Caddy module metadata.
-func (SpikeArrest) CaddyModule() caddy.ModuleInfo {
+func (*SpikeArrest) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.spike_arrest",
 		New: func() caddy.Module { return new(SpikeArrest) },
@@ -146,7 +146,7 @@ func parseSpikeArrestCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 
 // Interface guards.
 var (
-	_ caddy.Module                = SpikeArrest{}
+	_ caddy.Module                = (*SpikeArrest)(nil)
 	_ caddy.Provisioner           = (*SpikeArrest)(nil)
 	_ caddyhttp.MiddlewareHandler = (*SpikeArrest)(nil)
 	_ caddyfile.Unmarshaler       = (*SpikeArrest)(nil)

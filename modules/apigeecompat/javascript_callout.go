@@ -19,7 +19,7 @@ import (
 )
 
 func init() {
-	caddy.RegisterModule(JavaScriptCallout{})
+	caddy.RegisterModule(new(JavaScriptCallout))
 	httpcaddyfile.RegisterHandlerDirective("js_callout", parseJavaScriptCalloutCaddyfile)
 }
 
@@ -51,7 +51,7 @@ type JavaScriptCallout struct {
 }
 
 // CaddyModule returns the Caddy module metadata.
-func (JavaScriptCallout) CaddyModule() caddy.ModuleInfo {
+func (*JavaScriptCallout) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.js_callout",
 		New: func() caddy.Module { return new(JavaScriptCallout) },
@@ -279,7 +279,7 @@ func parseJavaScriptCalloutCaddyfile(h httpcaddyfile.Helper) (caddyhttp.Middlewa
 
 // Interface guards.
 var (
-	_ caddy.Module                = JavaScriptCallout{}
+	_ caddy.Module                = (*JavaScriptCallout)(nil)
 	_ caddy.Provisioner           = (*JavaScriptCallout)(nil)
 	_ caddyhttp.MiddlewareHandler = (*JavaScriptCallout)(nil)
 	_ caddyfile.Unmarshaler       = (*JavaScriptCallout)(nil)
