@@ -16,10 +16,10 @@ import (
 
 func init() {
 	caddy.RegisterModule(GoogleAuth{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_google_auth", parseGoogleAuthCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("google_auth", parseGoogleAuthCaddyfile)
 }
 
-// GoogleAuth is the apigee_google_auth Caddy module.
+// GoogleAuth is the google_auth Caddy module.
 // It fetches a Google OIDC ID Token for the configured audience and injects it
 // as "Authorization: Bearer <token>" on the outbound request, replicating the
 // behaviour of Apigee's <Authentication><GoogleIDToken> target config.
@@ -40,7 +40,7 @@ type GoogleAuth struct {
 // CaddyModule returns the Caddy module metadata.
 func (GoogleAuth) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_google_auth",
+		ID:  "http.handlers.google_auth",
 		New: func() caddy.Module { return new(GoogleAuth) },
 	}
 }
@@ -49,11 +49,11 @@ func (GoogleAuth) CaddyModule() caddy.ModuleInfo {
 func (g *GoogleAuth) Provision(ctx caddy.Context) error {
 	g.logger = ctx.Logger()
 	if g.Audience == "" {
-		return fmt.Errorf("apigee_google_auth: audience is required")
+		return fmt.Errorf("google_auth: audience is required")
 	}
 	ts, err := idtoken.NewTokenSource(context.Background(), g.Audience)
 	if err != nil {
-		return fmt.Errorf("apigee_google_auth: creating token source for %q: %w", g.Audience, err)
+		return fmt.Errorf("google_auth: creating token source for %q: %w", g.Audience, err)
 	}
 	g.tokenSource = ts
 	return nil
@@ -63,10 +63,10 @@ func (g *GoogleAuth) Provision(ctx caddy.Context) error {
 func (g *GoogleAuth) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	tok, err := g.tokenSource.Token()
 	if err != nil {
-		return fmt.Errorf("apigee_google_auth: fetching ID token for %q: %w", g.Audience, err)
+		return fmt.Errorf("google_auth: fetching ID token for %q: %w", g.Audience, err)
 	}
 	r.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-	debugLog(r, g.logger, "apigee_google_auth: injected ID token",
+	debugLog(r, g.logger, "google_auth: injected ID token",
 		zap.String("audience", g.Audience),
 		zap.Time("token_expiry", tok.Expiry),
 	)

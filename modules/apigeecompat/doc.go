@@ -4,9 +4,9 @@
 //
 // Modules registered by this package:
 //
-//   - http.handlers.apigee_state        — initialises per-request flow state
-//   - http.handlers.apigee_service_callout — executes a synchronous HTTP callout
-//   - http.handlers.apigee_assign_message  — mutates request/response headers and body
+//   - http.handlers.flow_state        — initialises per-request flow state
+//   - http.handlers.service_callout — executes a synchronous HTTP callout
+//   - http.handlers.assign_message  — mutates request/response headers and body
 //
 // To register all modules, add a blank import to your main package or xcaddy shim:
 //

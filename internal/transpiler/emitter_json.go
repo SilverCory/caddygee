@@ -138,7 +138,7 @@ func routeToJSON(route *Route) (caddyJSONRoute, error) {
 func handlerToJSON(h Handler) (json.RawMessage, error) {
 	switch v := h.(type) {
 	case FlowStateHandler:
-		return json.Marshal(map[string]string{"handler": "apigee_state"})
+		return json.Marshal(map[string]string{"handler": "flow_state"})
 
 	case PolicyHandler:
 		// Merge the module ID into the policy's own config object.
@@ -146,13 +146,13 @@ func handlerToJSON(h Handler) (json.RawMessage, error) {
 		if err := json.Unmarshal(v.Config, &m); err != nil {
 			m = map[string]any{}
 		}
-		// Extract just the module suffix (e.g. "apigee_assign_message").
+		// Extract just the module suffix (e.g. "assign_message").
 		m["handler"] = moduleShortName(v.Module)
 		return json.MarshalIndent(m, "", "  ")
 
 	case GoogleAuthHandler:
 		return json.Marshal(map[string]any{
-			"handler":  "apigee_google_auth",
+			"handler":  "google_auth",
 			"audience": v.Audience,
 		})
 
@@ -203,7 +203,7 @@ func handlerToJSON(h Handler) (json.RawMessage, error) {
 			return nil, fmt.Errorf("conditional inner handler: %w", err)
 		}
 		return json.Marshal(map[string]any{
-			"handler":   "apigee_conditional",
+			"handler":   "when",
 			"condition": v.Condition,
 			"inner":     json.RawMessage(inner),
 		})

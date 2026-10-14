@@ -101,8 +101,8 @@ func TestEmitCaddyfile_ContainsFlowStateHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	if !strings.Contains(out, "apigee_state") {
-		t.Errorf("Caddyfile missing apigee_state handler; got:\n%s", out)
+	if !strings.Contains(out, "flow_state") {
+		t.Errorf("Caddyfile missing flow_state handler; got:\n%s", out)
 	}
 }
 
@@ -153,7 +153,7 @@ func TestTranspile_PreFlowSteps(t *testing.T) {
 	for _, route := range srv.Routes {
 		for _, h := range route.Handlers {
 			if ph, ok := h.(transpiler.PolicyHandler); ok {
-				if ph.Module == "http.handlers.apigee_assign_message" {
+				if ph.Module == "http.handlers.assign_message" {
 					found = true
 				}
 			}
@@ -221,8 +221,8 @@ func TestTranspile_ServiceCalloutPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	if !strings.Contains(out, "apigee_service_callout") {
-		t.Errorf("JSON output missing apigee_service_callout; got:\n%s", out)
+	if !strings.Contains(out, "service_callout") {
+		t.Errorf("JSON output missing service_callout; got:\n%s", out)
 	}
 }
 

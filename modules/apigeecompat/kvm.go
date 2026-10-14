@@ -16,16 +16,16 @@ import (
 
 func init() {
 	caddy.RegisterModule(KVM{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_kvm", parseKVMCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("kvm", parseKVMCaddyfile)
 }
 
-// KVM is the apigee_kvm Caddy module.
+// KVM is the kvm Caddy module.
 // Equivalent to Apigee's KeyValueMapOperations policy.
 //
 // Static mode (default): baked-in key-value entries from the policy's
 // <InitialEntries> are written into flow state at request time.
 //
-// Live mode (when apigee_firestore is configured and MapName is set):
+// Live mode (when firestore is configured and MapName is set):
 // values are read from Firestore at request time with a 5-minute TTL cache.
 // Firestore collection: "kvm", document ID: <map_name>.
 // Document fields map directly to flow variable names.
@@ -45,6 +45,9 @@ type KVM struct {
 	// Collection is the Firestore collection name (default: "kvm").
 	Collection string `json:"collection,omitempty"`
 
+	// CacheTTLSeconds is how long to cache Firestore values (default: 300).
+	CacheTTLSeconds int `json:"cache_ttl_seconds,omitempty"`
+
 	logger   *zap.Logger
 	fsClient *firestore.Client
 	kvCache  *ttlCache[map[string]string]
@@ -53,7 +56,7 @@ type KVM struct {
 // CaddyModule returns the Caddy module metadata.
 func (KVM) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_kvm",
+		ID:  "http.handlers.kvm",
 		New: func() caddy.Module { return new(KVM) },
 	}
 }
@@ -65,14 +68,19 @@ func (k *KVM) Provision(ctx caddy.Context) error {
 		k.Collection = "kvm"
 	}
 	if len(k.Entries) == 0 && k.MapName == "" {
-		k.logger.Warn("apigee_kvm: no entries and no map_name — this handler is a no-op")
+		k.logger.Warn("kvm: no entries and no map_name — this handler is a no-op")
 	}
 	if app, ok := GetFirestoreApp(ctx); ok && k.MapName != "" {
 		k.fsClient = app.Client()
-		k.kvCache = newTTLCache[map[string]string](5 * time.Minute)
-		k.logger.Info("apigee_kvm: Firestore live mode enabled",
+		ttl := time.Duration(k.CacheTTLSeconds) * time.Second
+		if ttl <= 0 {
+			ttl = 5 * time.Minute
+		}
+		k.kvCache = newTTLCache[map[string]string](ttl)
+		k.logger.Info("kvm: Firestore live mode enabled",
 			zap.String("map", k.MapName),
-			zap.String("collection", k.Collection))
+			zap.String("collection", k.Collection),
+			zap.Duration("cache_ttl", ttl))
 	}
 	return nil
 }
@@ -93,19 +101,19 @@ func (k *KVM) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.H
 	// Live Firestore overlay.
 	if k.fsClient != nil {
 		if live, err := k.fetchLive(r.Context()); err != nil {
-			k.logger.Warn("apigee_kvm: Firestore read failed, using static values",
+			k.logger.Warn("kvm: Firestore read failed, using static values",
 				zap.String("map", k.MapName), zap.Error(err))
 		} else {
 			for key, val := range live {
 				fs.Set(key, val)
 			}
-			debugLog(r, k.logger, "apigee_kvm: live entries applied",
+			debugLog(r, k.logger, "kvm: live entries applied",
 				zap.String("map", k.MapName),
 				zap.Int("count", len(live)),
 			)
 		}
 	} else if len(k.Entries) > 0 {
-		debugLog(r, k.logger, "apigee_kvm: static entries applied",
+		debugLog(r, k.logger, "kvm: static entries applied",
 			zap.Int("count", len(k.Entries)),
 		)
 	}
@@ -159,6 +167,13 @@ func parseKVMCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, err
 					return nil, h.ArgErr()
 				}
 				k.Collection = h.Val()
+			case "cache_ttl_seconds":
+				if !h.NextArg() {
+					return nil, h.ArgErr()
+				}
+				if _, err := fmt.Sscanf(h.Val(), "%d", &k.CacheTTLSeconds); err != nil {
+					return nil, h.Errf("invalid cache_ttl_seconds value %q: %v", h.Val(), err)
+				}
 			default:
 				return nil, h.Errf("unrecognised subdirective %q", h.Val())
 			}

@@ -170,17 +170,17 @@ func emitRoutes(b *strings.Builder, routes []*Route, indent string) {
 func emitHandler(b *strings.Builder, h Handler, indent string) {
 	switch v := h.(type) {
 	case FlowStateHandler:
-		fmt.Fprintf(b, "%sapigee_state\n", indent)
+		fmt.Fprintf(b, "%sflow_state\n", indent)
 
 	case PolicyHandler:
 		shortName := moduleShortName(v.Module)
-		if shortName == "apigee_unknown" {
+		if shortName == "unknown" {
 			fmt.Fprintf(b, "%s# WARNING: unsupported policy %q — no Caddy module available\n", indent, v.PolicyName)
 			return
 		}
 		// apigee_verify_jwt carries algorithm, jwks_uri/public_key, issuer, audience,
 		// and policy_name from the policy config — emit as a subdirective block.
-		if shortName == "apigee_verify_jwt" && len(v.Config) > 0 {
+		if shortName == "verify_jwt" && len(v.Config) > 0 {
 			var cfg struct {
 				Algorithm  string `json:"algorithm"`
 				PublicKey  string `json:"public_key,omitempty"`
@@ -212,7 +212,7 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 			}
 		}
 		// apigee_raise_fault carries status_code and body from the policy config.
-		if shortName == "apigee_raise_fault" && len(v.Config) > 0 {
+		if shortName == "raise_fault" && len(v.Config) > 0 {
 			var cfg struct {
 				StatusCode int    `json:"status_code"`
 				Body       string `json:"body,omitempty"`
@@ -229,7 +229,7 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 		}
 		// apigee_javascript_callout requires the source to be present in the
 		// Caddyfile block — emit it as an inline block with a source subdirective.
-		if shortName == "apigee_javascript_callout" && len(v.Config) > 0 {
+		if shortName == "js_callout" && len(v.Config) > 0 {
 			var cfg struct {
 				Source    string `json:"source"`
 				TimeoutMs int    `json:"timeout_ms,omitempty"`
@@ -245,7 +245,7 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 			}
 		}
 		// apigee_spike_arrest carries rate config.
-		if shortName == "apigee_spike_arrest" && len(v.Config) > 0 {
+		if shortName == "spike_arrest" && len(v.Config) > 0 {
 			var cfg struct {
 				Rate string `json:"rate"`
 			}
@@ -255,7 +255,7 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 			}
 		}
 		// apigee_cors carries allow_origins, allow_methods, etc.
-		if shortName == "apigee_cors" && len(v.Config) > 0 {
+		if shortName == "cors" && len(v.Config) > 0 {
 			var cfg struct {
 				AllowOrigins     []string `json:"allow_origins,omitempty"`
 				AllowMethods     []string `json:"allow_methods,omitempty"`
@@ -289,7 +289,7 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 			}
 		}
 		// apigee_extract_variables — emit prefix + header_pattern / path_pattern subdirectives.
-		if shortName == "apigee_extract_variables" && len(v.Config) > 0 {
+		if shortName == "extract_vars" && len(v.Config) > 0 {
 			var cfg struct {
 				Prefix         string            `json:"prefix,omitempty"`
 				HeaderPatterns map[string]string `json:"header_patterns,omitempty"`
@@ -317,7 +317,7 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 			}
 		}
 		// apigee_quota — emit allow, interval, identifier_ref subdirectives.
-		if shortName == "apigee_quota" && len(v.Config) > 0 {
+		if shortName == "quota" && len(v.Config) > 0 {
 			var cfg struct {
 				Allow         int    `json:"allow"`
 				Interval      int    `json:"interval"`
@@ -334,13 +334,21 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 				return
 			}
 		}
-		// apigee_kvm — emit entry subdirectives.
-		if shortName == "apigee_kvm" && len(v.Config) > 0 {
+		// kvm — emit map_name, cache_ttl_seconds, and entry subdirectives.
+		if shortName == "kvm" && len(v.Config) > 0 {
 			var cfg struct {
-				Entries map[string]string `json:"entries,omitempty"`
+				MapName         string            `json:"map_name,omitempty"`
+				CacheTTLSeconds int               `json:"cache_ttl_seconds,omitempty"`
+				Entries         map[string]string `json:"entries,omitempty"`
 			}
-			if err := json.Unmarshal(v.Config, &cfg); err == nil && len(cfg.Entries) > 0 {
+			if err := json.Unmarshal(v.Config, &cfg); err == nil && (cfg.MapName != "" || len(cfg.Entries) > 0) {
 				fmt.Fprintf(b, "%s%s {\n", indent, shortName)
+				if cfg.MapName != "" {
+					fmt.Fprintf(b, "%s\tmap_name %s\n", indent, cfg.MapName)
+				}
+				if cfg.CacheTTLSeconds > 0 {
+					fmt.Fprintf(b, "%s\tcache_ttl_seconds %d\n", indent, cfg.CacheTTLSeconds)
+				}
 				ekeys := make([]string, 0, len(cfg.Entries))
 				for k := range cfg.Entries {
 					ekeys = append(ekeys, k)
@@ -353,13 +361,86 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 				return
 			}
 		}
+		// assign_message — emit set_header / add_header / remove_header / set_body / phase subdirectives.
+		if shortName == "assign_message" && len(v.Config) > 0 {
+			var cfg struct {
+				SetHeaders    map[string]string `json:"set_headers,omitempty"`
+				AddHeaders    map[string]string `json:"add_headers,omitempty"`
+				RemoveHeaders []string          `json:"remove_headers,omitempty"`
+				SetBody       string            `json:"set_body,omitempty"`
+				Phase         string            `json:"phase,omitempty"`
+			}
+			if err := json.Unmarshal(v.Config, &cfg); err == nil {
+				fmt.Fprintf(b, "%s%s {\n", indent, shortName)
+				if cfg.Phase != "" && cfg.Phase != "request" {
+					fmt.Fprintf(b, "%s\tphase %s\n", indent, cfg.Phase)
+				}
+				// Sort keys for deterministic output.
+				shKeys := make([]string, 0, len(cfg.SetHeaders))
+				for k := range cfg.SetHeaders {
+					shKeys = append(shKeys, k)
+				}
+				sort.Strings(shKeys)
+				for _, k := range shKeys {
+					fmt.Fprintf(b, "%s\tset_header %s %s\n", indent, k, jsonStringLiteral(cfg.SetHeaders[k]))
+				}
+				ahKeys := make([]string, 0, len(cfg.AddHeaders))
+				for k := range cfg.AddHeaders {
+					ahKeys = append(ahKeys, k)
+				}
+				sort.Strings(ahKeys)
+				for _, k := range ahKeys {
+					fmt.Fprintf(b, "%s\tadd_header %s %s\n", indent, k, jsonStringLiteral(cfg.AddHeaders[k]))
+				}
+				for _, h := range cfg.RemoveHeaders {
+					fmt.Fprintf(b, "%s\tremove_header %s\n", indent, h)
+				}
+				if cfg.SetBody != "" {
+					fmt.Fprintf(b, "%s\tset_body %s\n", indent, jsonStringLiteral(cfg.SetBody))
+				}
+				fmt.Fprintf(b, "%s}\n", indent)
+				return
+			}
+		}
+		// service_callout — emit target_url, method, request_body_var, response_var, timeout_seconds subdirectives.
+		if shortName == "service_callout" && len(v.Config) > 0 {
+			var cfg struct {
+				TargetURL          string `json:"target_url"`
+				Method             string `json:"method,omitempty"`
+				RequestBodyVar     string `json:"request_body_var,omitempty"`
+				ResponseVar        string `json:"response_var,omitempty"`
+				TimeoutSeconds     int    `json:"timeout_seconds,omitempty"`
+				WarnRequestHeaders bool   `json:"warn_request_headers,omitempty"`
+			}
+			if err := json.Unmarshal(v.Config, &cfg); err == nil && cfg.TargetURL != "" {
+				if cfg.WarnRequestHeaders {
+					fmt.Fprintf(b, "%s# WARNING: %s adds outbound request headers — not supported by service_callout module\n", indent, v.PolicyName)
+				}
+				fmt.Fprintf(b, "%s%s {\n", indent, shortName)
+				fmt.Fprintf(b, "%s\ttarget_url %s\n", indent, cfg.TargetURL)
+				if cfg.Method != "" {
+					fmt.Fprintf(b, "%s\tmethod %s\n", indent, cfg.Method)
+				}
+				if cfg.RequestBodyVar != "" {
+					fmt.Fprintf(b, "%s\trequest_body_var %s\n", indent, cfg.RequestBodyVar)
+				}
+				if cfg.ResponseVar != "" {
+					fmt.Fprintf(b, "%s\tresponse_var %s\n", indent, cfg.ResponseVar)
+				}
+				if cfg.TimeoutSeconds > 0 {
+					fmt.Fprintf(b, "%s\ttimeout_seconds %d\n", indent, cfg.TimeoutSeconds)
+				}
+				fmt.Fprintf(b, "%s}\n", indent)
+				return
+			}
+		}
 		// apigee_verify_api_key (passthrough) — emit a TODO comment.
-		if shortName == "apigee_verify_api_key" && len(v.Config) > 0 {
+		if shortName == "verify_api_key" && len(v.Config) > 0 {
 			var cfg struct {
 				APIKeyRef string `json:"api_key_ref"`
 			}
 			if err := json.Unmarshal(v.Config, &cfg); err == nil {
-				fmt.Fprintf(b, "%s# TODO: apigee_verify_api_key not enforced — passthrough mode\n", indent)
+				fmt.Fprintf(b, "%s# TODO: verify_api_key not enforced — passthrough mode\n", indent)
 				fmt.Fprintf(b, "%s%s {\n", indent, shortName)
 				if cfg.APIKeyRef != "" {
 					fmt.Fprintf(b, "%s\tapi_key_ref %s\n", indent, cfg.APIKeyRef)
@@ -371,7 +452,7 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 		fmt.Fprintf(b, "%s%s %s\n", indent, shortName, v.PolicyName)
 
 	case GoogleAuthHandler:
-		fmt.Fprintf(b, "%sapigee_google_auth %s\n", indent, v.Audience)
+		fmt.Fprintf(b, "%sgoogle_auth %s\n", indent, v.Audience)
 
 	case RewriteHandler:
 		if v.StripPathPrefix != "" {
@@ -386,28 +467,14 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 
 	case ConditionalHandler:
 		// Skip the conditional wrapper entirely when the inner handler has no
-		// Caddyfile representation (e.g. unsupported policy → comment only).
-		// An empty apigee_conditional block is a parse error.
+		// Caddyfile representation (e.g. unsupported policy -> comment only).
+		// An empty when block is a parse error.
 		if isUnsupportedPolicy(v.Inner) {
 			ph := v.Inner.(PolicyHandler)
 			fmt.Fprintf(b, "%s# WARNING: unsupported policy %q skipped (no Caddy module available)\n", indent, ph.PolicyName)
 			return
 		}
-		// For PolicyHandlers with embedded JSON config, use the raw_json
-		// passthrough so parseConditionalCaddyfile can reconstruct the full
-		// module config without re-parsing each handler's Caddyfile syntax.
-		// Use backtick quoting so JSON escape sequences survive the Caddyfile
-		// tokenizer unmodified (backtick strings are stored verbatim).
-		if ph, ok := v.Inner.(PolicyHandler); ok && len(ph.Config) > 0 {
-			innerJSON := buildInnerJSON(ph)
-			if innerJSON != "" && !strings.ContainsRune(innerJSON, '`') {
-				fmt.Fprintf(b, "%sapigee_conditional %q {\n", indent, v.Condition)
-				fmt.Fprintf(b, "%s\traw_json `%s`\n", indent, innerJSON)
-				fmt.Fprintf(b, "%s}\n", indent)
-				return
-			}
-		}
-		fmt.Fprintf(b, "%sapigee_conditional %q {\n", indent, v.Condition)
+		fmt.Fprintf(b, "%swhen %s {\n", indent, v.Condition)
 		emitHandler(b, v.Inner, indent+"\t")
 		fmt.Fprintf(b, "%s}\n", indent)
 	}
@@ -416,34 +483,7 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 // isUnsupportedPolicy reports whether h is a PolicyHandler with no Caddy module.
 func isUnsupportedPolicy(h Handler) bool {
 	ph, ok := h.(PolicyHandler)
-	return ok && moduleShortName(ph.Module) == "apigee_unknown"
-}
-
-// buildInnerJSON produces the full JSON object for a PolicyHandler so it can be
-// embedded as a raw_json value inside apigee_conditional Caddyfile blocks.
-// Returns "" if the handler has no config to embed.
-func buildInnerJSON(ph PolicyHandler) string {
-	if len(ph.Config) == 0 {
-		return ""
-	}
-	// The Config is already a JSON object. Inject the "handler" key.
-	// Result: {"handler":"<short>", ...rest of config...}
-	short := moduleShortName(ph.Module)
-	if short == "apigee_unknown" {
-		return ""
-	}
-	// Config may be a JSON object; we need to merge in the handler key.
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(ph.Config, &m); err != nil {
-		return ""
-	}
-	handlerBytes, _ := json.Marshal(short)
-	m["handler"] = json.RawMessage(handlerBytes)
-	merged, err := json.Marshal(m)
-	if err != nil {
-		return ""
-	}
-	return string(merged)
+	return ok && moduleShortName(ph.Module) == "unknown"
 }
 
 // jsonStringLiteral marshals s as a JSON string literal for embedding in Caddyfile directives.

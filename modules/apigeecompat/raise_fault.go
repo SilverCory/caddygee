@@ -13,10 +13,10 @@ import (
 
 func init() {
 	caddy.RegisterModule(RaiseFault{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_raise_fault", parseRaiseFaultCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("raise_fault", parseRaiseFaultCaddyfile)
 }
 
-// RaiseFault is the apigee_raise_fault Caddy module.
+// RaiseFault is the raise_fault Caddy module.
 // It immediately returns a fixed HTTP response, short-circuiting the handler
 // chain. Equivalent to Apigee's RaiseFault policy.
 type RaiseFault struct {
@@ -31,7 +31,7 @@ type RaiseFault struct {
 // CaddyModule returns the Caddy module metadata.
 func (RaiseFault) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_raise_fault",
+		ID:  "http.handlers.raise_fault",
 		New: func() caddy.Module { return new(RaiseFault) },
 	}
 }
@@ -43,14 +43,14 @@ func (rf *RaiseFault) Provision(ctx caddy.Context) error {
 		rf.StatusCode = http.StatusInternalServerError
 	}
 	if rf.StatusCode < 100 || rf.StatusCode > 599 {
-		return fmt.Errorf("apigee_raise_fault: invalid status_code %d", rf.StatusCode)
+		return fmt.Errorf("raise_fault: invalid status_code %d", rf.StatusCode)
 	}
 	return nil
 }
 
 // ServeHTTP writes the fault response immediately without calling next.
 func (rf RaiseFault) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
-	debugLog(r, rf.logger, "apigee_raise_fault",
+	debugLog(r, rf.logger, "raise_fault",
 		zap.Int("status_code", rf.StatusCode),
 	)
 	if rf.Body != "" {

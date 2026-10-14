@@ -67,11 +67,11 @@ type Handler interface {
 type FlowStateHandler struct{}
 
 func (FlowStateHandler) handlerTag()       {}
-func (FlowStateHandler) ModuleID() string  { return "http.handlers.apigee_state" }
+func (FlowStateHandler) ModuleID() string  { return "http.handlers.flow_state" }
 
 // PolicyHandler invokes one of the custom apigeecompat Caddy modules.
 type PolicyHandler struct {
-	Module     string          // e.g. "http.handlers.apigee_assign_message"
+	Module     string          // e.g. "http.handlers.assign_message"
 	PolicyName string          // original Apigee policy name (for docs/comments)
 	Config     json.RawMessage // module-specific JSON config
 }
@@ -94,7 +94,7 @@ type GoogleAuthHandler struct {
 }
 
 func (GoogleAuthHandler) handlerTag()      {}
-func (GoogleAuthHandler) ModuleID() string { return "http.handlers.apigee_google_auth" }
+func (GoogleAuthHandler) ModuleID() string { return "http.handlers.google_auth" }
 
 // StaticResponseHandler returns a fixed response (used for error flows).
 type StaticResponseHandler struct {
@@ -122,7 +122,7 @@ type ConditionalHandler struct {
 }
 
 func (ConditionalHandler) handlerTag()      {}
-func (ConditionalHandler) ModuleID() string { return "http.handlers.apigee_conditional" }
+func (ConditionalHandler) ModuleID() string { return "http.handlers.when" }
 
 // Transpile converts an Apigee bundle into a CaddyConfig using the given options.
 func Transpile(bundle *apigee.Bundle, opts Options) (*CaddyConfig, error) {
@@ -261,7 +261,7 @@ type conditionalTarget struct {
 }
 
 // appendTargetHandlers appends target handlers for all conditional targets.
-// Each conditional target is wrapped in an apigee_conditional handler so that
+// Each conditional target is wrapped in a when handler so that
 // the correct upstream is chosen at runtime based on environment.name etc.
 // An unconditional target is emitted as a bare reverse_proxy (last resort).
 func appendTargetHandlers(route *Route, targets []conditionalTarget) {
@@ -277,8 +277,8 @@ func appendTargetHandlers(route *Route, targets []conditionalTarget) {
 			// as separate conditional entries sharing the same condition.
 			if t.Condition != "" {
 				route.Handlers = append(route.Handlers,
-					ConditionalHandler{Condition: t.Condition, Inner: GoogleAuthHandler{Audience: t.Audience}},
-					ConditionalHandler{Condition: t.Condition, Inner: ReverseProxyHandler{Upstream: t.URL}},
+					ConditionalHandler{Condition: normaliseCondition(t.Condition), Inner: GoogleAuthHandler{Audience: t.Audience}},
+					ConditionalHandler{Condition: normaliseCondition(t.Condition), Inner: ReverseProxyHandler{Upstream: t.URL}},
 				)
 			} else {
 				route.Handlers = append(route.Handlers,
@@ -289,7 +289,7 @@ func appendTargetHandlers(route *Route, targets []conditionalTarget) {
 			continue
 		}
 		if t.Condition != "" {
-			inner = ConditionalHandler{Condition: t.Condition, Inner: ReverseProxyHandler{Upstream: t.URL}}
+			inner = ConditionalHandler{Condition: normaliseCondition(t.Condition), Inner: ReverseProxyHandler{Upstream: t.URL}}
 		} else {
 			inner = ReverseProxyHandler{Upstream: t.URL}
 		}
@@ -332,7 +332,7 @@ func mapFlow(flow apigee.Flow, bundle *apigee.Bundle, targets []conditionalTarge
 	appendTargetHandlers(route, targets)
 
 	// Response steps run after the upstream responds.
-	// apigee_assign_message with phase=response buffers the response internally.
+	// assign_message with phase=response buffers the response internally.
 	for _, step := range flow.Response.Steps {
 		route.Handlers = append(route.Handlers, mapStepToHandlerPhase(step, bundle, "response"))
 	}
@@ -343,7 +343,7 @@ func mapFlow(flow apigee.Flow, bundle *apigee.Bundle, targets []conditionalTarge
 func mapStepToHandlerPhase(step apigee.Step, bundle *apigee.Bundle, phase string) Handler {
 	h := mapPolicyToHandler(step.Name, bundle, phase)
 	if step.Condition != "" {
-		return ConditionalHandler{Condition: step.Condition, Inner: h}
+		return ConditionalHandler{Condition: normaliseCondition(step.Condition), Inner: h}
 	}
 	return h
 }
@@ -351,9 +351,38 @@ func mapStepToHandlerPhase(step apigee.Step, bundle *apigee.Bundle, phase string
 func mapStepToHandler(step apigee.Step, bundle *apigee.Bundle) Handler {
 	h := mapPolicyToHandler(step.Name, bundle, "request")
 	if step.Condition != "" {
-		return ConditionalHandler{Condition: step.Condition, Inner: h}
+		return ConditionalHandler{Condition: normaliseCondition(step.Condition), Inner: h}
 	}
 	return h
+}
+
+// normaliseCondition cleans up raw Apigee condition strings for use as bare
+// Caddyfile arguments. It strips outer parentheses (Apigee XML often wraps the
+// whole expression) and collapses internal whitespace including newlines so the
+// condition fits neatly on a single line.
+func normaliseCondition(s string) string {
+	// Collapse all whitespace runs (including newlines from multi-line XML) to a single space.
+	fields := strings.Fields(s)
+	s = strings.Join(fields, " ")
+	// Strip a single layer of wrapping parentheses when they enclose the whole expression.
+	if len(s) >= 2 && s[0] == '(' && s[len(s)-1] == ')' {
+		inner := s[1 : len(s)-1]
+		// Only strip if parens are balanced (i.e. they really wrap the whole thing).
+		depth := 0
+		for _, ch := range inner {
+			if ch == '(' {
+				depth++
+			} else if ch == ')' {
+				depth--
+				if depth < 0 {
+					// Unbalanced — the outer parens are not a simple wrapper.
+					return s
+				}
+			}
+		}
+		return inner
+	}
+	return s
 }
 
 func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) Handler {
@@ -361,7 +390,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 	if !ok {
 		// Unknown policy — emit a placeholder comment via a static handler.
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_unknown",
+			Module:     "http.handlers.unknown",
 			PolicyName: policyName,
 			Config:     json.RawMessage(`{}`),
 		}
@@ -375,7 +404,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		}
 		raw, _ := json.Marshal(cfg)
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_assign_message",
+			Module:     "http.handlers.assign_message",
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
@@ -383,7 +412,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		cfg := buildServiceCalloutConfig(pol)
 		raw, _ := json.Marshal(cfg)
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_service_callout",
+			Module:     "http.handlers.service_callout",
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
@@ -394,7 +423,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 			src, err := resolveResourceURL(jsc.ResourceURL, bundle.Dir)
 			if err != nil {
 				return PolicyHandler{
-					Module:     "http.handlers.apigee_unknown",
+					Module:     "http.handlers.unknown",
 					PolicyName: pol.Name,
 					Config:     json.RawMessage(fmt.Sprintf(`{"type":"Javascript","reason":%q}`, err.Error())),
 				}
@@ -407,7 +436,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		}
 		if jsc.Source == "" {
 			return PolicyHandler{
-				Module:     "http.handlers.apigee_unknown",
+				Module:     "http.handlers.unknown",
 				PolicyName: pol.Name,
 				Config:     json.RawMessage(`{"type":"Javascript","reason":"no Source or ResourceURL found"}`),
 			}
@@ -415,7 +444,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		cfg := buildJavaScriptCalloutConfig(pol)
 		raw, _ := json.Marshal(cfg)
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_javascript_callout",
+			Module:     "http.handlers.js_callout",
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
@@ -423,7 +452,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		cfg := buildRaiseFaultConfig(pol)
 		raw, _ := json.Marshal(cfg)
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_raise_fault",
+			Module:     "http.handlers.raise_fault",
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
@@ -431,7 +460,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		cfg := buildVerifyJWTConfig(pol)
 		raw, _ := json.Marshal(cfg)
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_verify_jwt",
+			Module:     "http.handlers.verify_jwt",
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
@@ -439,7 +468,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		cfg := buildSpikeArrestConfig(pol)
 		raw, _ := json.Marshal(cfg)
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_spike_arrest",
+			Module:     "http.handlers.spike_arrest",
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
@@ -447,7 +476,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		cfg := buildCORSConfig(pol)
 		raw, _ := json.Marshal(cfg)
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_cors",
+			Module:     "http.handlers.cors",
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
@@ -455,7 +484,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		cfg := buildVerifyAPIKeyConfig(pol)
 		raw, _ := json.Marshal(cfg)
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_verify_api_key",
+			Module:     "http.handlers.verify_api_key",
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
@@ -463,7 +492,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		cfg := buildExtractVariablesConfig(pol)
 		raw, _ := json.Marshal(cfg)
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_extract_variables",
+			Module:     "http.handlers.extract_vars",
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
@@ -471,7 +500,7 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		cfg := buildQuotaConfig(pol)
 		raw, _ := json.Marshal(cfg)
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_quota",
+			Module:     "http.handlers.quota",
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
@@ -479,20 +508,20 @@ func mapPolicyToHandler(policyName string, bundle *apigee.Bundle, phase string) 
 		cfg := buildKVMConfig(pol)
 		raw, _ := json.Marshal(cfg)
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_kvm",
+			Module:     "http.handlers.kvm",
 			PolicyName: pol.Name,
 			Config:     raw,
 		}
 	default:
 		return PolicyHandler{
-			Module:     "http.handlers.apigee_unknown",
+			Module:     "http.handlers.unknown",
 			PolicyName: pol.Name,
 			Config:     json.RawMessage(fmt.Sprintf(`{"type":%q}`, pol.Type)),
 		}
 	}
 }
 
-// assignMessageConfig is the JSON shape consumed by apigee_assign_message.
+// assignMessageConfig is the JSON shape consumed by assign_message.
 type assignMessageConfig struct {
 	SetHeaders    map[string]string `json:"set_headers,omitempty"`
 	RemoveHeaders []string          `json:"remove_headers,omitempty"`
@@ -530,25 +559,33 @@ func buildAssignMessageConfig(pol apigee.Policy) assignMessageConfig {
 	return cfg
 }
 
-// serviceCalloutConfig is the JSON shape consumed by apigee_service_callout.
+// serviceCalloutConfig is the JSON shape consumed by service_callout.
 type serviceCalloutConfig struct {
 	TargetURL      string `json:"target_url"`
 	Method         string `json:"method,omitempty"`
+	RequestBodyVar string `json:"request_body_var,omitempty"`
 	ResponseVar    string `json:"response_var,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+	// WarnRequestHeaders is set when the Apigee policy adds outbound request
+	// headers — a feature not supported by the service_callout module.
+	WarnRequestHeaders bool `json:"warn_request_headers,omitempty"`
 }
 
 func buildServiceCalloutConfig(pol apigee.Policy) serviceCalloutConfig {
 	sc := pol.ServiceCallout
 	cfg := serviceCalloutConfig{
 		TargetURL:      sc.HTTPTargetConnection.URL,
+		RequestBodyVar: sc.Request.Variable,
 		ResponseVar:    sc.Response,
 		TimeoutSeconds: 10,
+	}
+	if len(sc.Request.SetHeaders) > 0 || len(sc.Request.AddHeaders) > 0 {
+		cfg.WarnRequestHeaders = true
 	}
 	return cfg
 }
 
-// jsCalloutConfig is the JSON shape consumed by apigee_javascript_callout.
+// jsCalloutConfig is the JSON shape consumed by js_callout.
 type jsCalloutConfig struct {
 	Source    string `json:"source"`
 	TimeoutMs int    `json:"timeout_ms,omitempty"`
@@ -566,7 +603,7 @@ func buildJavaScriptCalloutConfig(pol apigee.Policy) jsCalloutConfig {
 	return cfg
 }
 
-// raiseFaultConfig is the JSON shape consumed by apigee_raise_fault.
+// raiseFaultConfig is the JSON shape consumed by raise_fault.
 type raiseFaultConfig struct {
 	StatusCode int    `json:"status_code"`
 	Body       string `json:"body,omitempty"`
@@ -584,7 +621,7 @@ func buildRaiseFaultConfig(pol apigee.Policy) raiseFaultConfig {
 	}
 }
 
-// verifyJWTConfig is the JSON shape consumed by apigee_verify_jwt.
+// verifyJWTConfig is the JSON shape consumed by verify_jwt.
 type verifyJWTConfig struct {
 	Algorithm  string `json:"algorithm"`
 	PublicKey  string `json:"public_key,omitempty"`
@@ -606,7 +643,7 @@ func buildVerifyJWTConfig(pol apigee.Policy) verifyJWTConfig {
 	}
 }
 
-// spikeArrestConfig is the JSON shape consumed by apigee_spike_arrest.
+// spikeArrestConfig is the JSON shape consumed by spike_arrest.
 type spikeArrestConfig struct {
 	Rate string `json:"rate"`
 }
@@ -618,7 +655,7 @@ func buildSpikeArrestConfig(pol apigee.Policy) spikeArrestConfig {
 	}
 }
 
-// corsConfig is the JSON shape consumed by apigee_cors.
+// corsConfig is the JSON shape consumed by cors.
 type corsConfig struct {
 	AllowOrigins     []string `json:"allow_origins,omitempty"`
 	AllowMethods     []string `json:"allow_methods,omitempty"`
@@ -659,7 +696,7 @@ func splitAndTrim(s string) []string {
 	return result
 }
 
-// verifyAPIKeyConfig is the JSON shape consumed by apigee_verify_api_key.
+// verifyAPIKeyConfig is the JSON shape consumed by verify_api_key.
 type verifyAPIKeyConfig struct {
 	APIKeyRef string `json:"api_key_ref"`
 }
@@ -671,7 +708,7 @@ func buildVerifyAPIKeyConfig(pol apigee.Policy) verifyAPIKeyConfig {
 	}
 }
 
-// extractVariablesConfig is the JSON shape consumed by apigee_extract_variables.
+// extractVariablesConfig is the JSON shape consumed by extract_vars.
 type extractVariablesConfig struct {
 	Prefix           string            `json:"prefix,omitempty"`
 	HeaderPatterns   map[string]string `json:"header_patterns,omitempty"`
@@ -698,7 +735,11 @@ func buildExtractVariablesConfig(pol apigee.Policy) extractVariablesConfig {
 	return cfg
 }
 
-// quotaConfig is the JSON shape consumed by apigee_quota.
+// quotaConfig is the JSON shape consumed by quota.
+// Note: the quota module also supports limit_ref and interval_ref for dynamic
+// limits driven from flow variables (e.g. set by verify_api_key). Apigee
+// <Allow ref="..."> and <Interval ref="..."> are not currently parsed from the
+// XML — only static Allow/Interval values are transpiled.
 type quotaConfig struct {
 	Allow         int    `json:"allow"`
 	Interval      int    `json:"interval"` // in seconds
@@ -723,14 +764,26 @@ func buildQuotaConfig(pol apigee.Policy) quotaConfig {
 	}
 }
 
-// kvmConfig is the JSON shape consumed by apigee_kvm.
+// kvmConfig is the JSON shape consumed by kvm.
+// MapName is the Firestore document ID (from mapIdentifier). Entries are the
+// static fallback values derived from InitialEntries + Get.assignTo mappings.
+// At runtime, Firestore values overlay the static entries. Firestore document
+// fields must use the Get.assignTo names (e.g. "getAuthApiBaseUrl"), not the
+// KVM key names (e.g. "authApiBaseUrl").
+// CacheTTLSeconds is the Firestore cache TTL (from ExpiryTimeInSecs; default 300).
 type kvmConfig struct {
-	Entries map[string]string `json:"entries,omitempty"`
+	MapName         string            `json:"map_name,omitempty"`
+	CacheTTLSeconds int               `json:"cache_ttl_seconds,omitempty"`
+	Entries         map[string]string `json:"entries,omitempty"`
 }
 
 func buildKVMConfig(pol apigee.Policy) kvmConfig {
 	kvm := pol.KVM
-	cfg := kvmConfig{Entries: make(map[string]string)}
+	cfg := kvmConfig{
+		MapName:         kvm.MapIdentifier,
+		CacheTTLSeconds: kvm.ExpiryTimeInSecs,
+		Entries:         make(map[string]string),
+	}
 	// Build a key→value lookup from InitialEntries.
 	entryMap := make(map[string]string)
 	for _, entry := range kvm.InitialEntries {
@@ -814,20 +867,79 @@ func resolveTargetForEndpoint(ep apigee.ProxyEndpoint, bundle *apigee.Bundle) []
 	return targets
 }
 
-// sanitizeName converts a flow name like "GetUsers" to "get_users" for use as
-// a Caddy named matcher identifier.
+// sanitizeName converts a flow/policy name to a snake_case Caddy matcher
+// identifier. It handles common naming conventions found in Apigee bundles:
+//
+//	"GetUsers"        → "get_users"       (camelCase)
+//	"FLOW"            → "flow"            (ALLCAPS word treated as one word)
+//	"BadMethod"       → "bad_method"      (PascalCase)
+//	"JWT-Flow"        → "jwt_flow"        (hyphen/non-alnum → separator)
+//	"FC-generateJWT"  → "fc_generate_jwt" (mixed)
+//
+// Rules:
+//  1. Non-alphanumeric characters are word boundaries (collapsed to one _).
+//  2. A transition from lowercase/digit to uppercase starts a new word.
+//  3. A transition from a run of uppercase to uppercase+lowercase starts a new
+//     word at the last uppercase letter (e.g. "JWTFlow" → "jwt_flow").
 func sanitizeName(name string) string {
-	var b strings.Builder
-	for i, r := range name {
-		if r >= 'A' && r <= 'Z' {
-			if i > 0 {
-				b.WriteByte('_')
+	runes := []rune(name)
+	var words [][]rune
+	var cur []rune
+
+	flush := func() {
+		if len(cur) > 0 {
+			words = append(words, cur)
+			cur = nil
+		}
+	}
+
+	for i, r := range runes {
+		isAlpha := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		isDigit := r >= '0' && r <= '9'
+		isUpper := r >= 'A' && r <= 'Z'
+
+		if !isAlpha && !isDigit {
+			// Non-alphanumeric → word boundary.
+			flush()
+			continue
+		}
+
+		if len(cur) == 0 {
+			cur = append(cur, r)
+			continue
+		}
+
+		prevUpper := cur[len(cur)-1] >= 'A' && cur[len(cur)-1] <= 'Z'
+
+		if isUpper {
+			// Peek ahead: if next char is lowercase, this upper starts a new word
+			// (handles "JWTFlow" → ["JWT","Flow"]).
+			nextIsLower := i+1 < len(runes) && runes[i+1] >= 'a' && runes[i+1] <= 'z'
+			if !prevUpper || (nextIsLower && len(cur) > 1) {
+				flush()
 			}
-			b.WriteRune(r + 32) // to lower
-		} else if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
 		} else {
+			// Lowercase/digit after uppercase(s) — if previous was upper and the
+			// one before that was also upper, split before the previous upper
+			// (handles "HTMLParser" → ["HTML","Parser"]).
+			_ = prevUpper // transition handled by the upper branch above
+		}
+
+		cur = append(cur, r)
+	}
+	flush()
+
+	var b strings.Builder
+	for i, word := range words {
+		if i > 0 {
 			b.WriteByte('_')
+		}
+		for _, r := range word {
+			if r >= 'A' && r <= 'Z' {
+				b.WriteRune(r + 32)
+			} else {
+				b.WriteRune(r)
+			}
 		}
 	}
 	return b.String()

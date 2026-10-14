@@ -49,7 +49,7 @@ func (s *FlowState) Set(key string, value interface{}) {
 }
 
 // GetFlowState retrieves the FlowState from a request context.
-// Returns nil, false if not present (apigee_state middleware was not in the chain).
+// Returns nil, false if not present (flow_state middleware was not in the chain).
 func GetFlowState(ctx context.Context) (*FlowState, bool) {
 	fs, ok := ctx.Value(flowStateKey).(*FlowState)
 	return fs, ok

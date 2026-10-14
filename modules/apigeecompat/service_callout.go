@@ -18,10 +18,10 @@ import (
 
 func init() {
 	caddy.RegisterModule(ServiceCallout{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_service_callout", parseServiceCalloutCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("service_callout", parseServiceCalloutCaddyfile)
 }
 
-// ServiceCallout is the apigee_service_callout Caddy module.
+// ServiceCallout is the service_callout Caddy module.
 // It executes a synchronous HTTP request and stores the response in flow state.
 type ServiceCallout struct {
 	// TargetURL is the callout endpoint. Supports {flowvar.X} substitution.
@@ -44,7 +44,7 @@ type ServiceCallout struct {
 // CaddyModule returns the Caddy module metadata.
 func (ServiceCallout) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_service_callout",
+		ID:  "http.handlers.service_callout",
 		New: func() caddy.Module { return new(ServiceCallout) },
 	}
 }
@@ -53,12 +53,12 @@ func (ServiceCallout) CaddyModule() caddy.ModuleInfo {
 func (s *ServiceCallout) Provision(ctx caddy.Context) error {
 	s.logger = ctx.Logger()
 	if s.TargetURL == "" {
-		return fmt.Errorf("apigee_service_callout: target_url is required")
+		return fmt.Errorf("service_callout: target_url is required")
 	}
 	// H1: SSRF guard — validate URL scheme unless the URL contains flow var placeholders.
 	if !strings.Contains(s.TargetURL, "{flowvar.") {
 		if !strings.HasPrefix(s.TargetURL, "http://") && !strings.HasPrefix(s.TargetURL, "https://") {
-			return fmt.Errorf("apigee_service_callout: target_url must use http:// or https:// scheme, got %q", s.TargetURL)
+			return fmt.Errorf("service_callout: target_url must use http:// or https:// scheme, got %q", s.TargetURL)
 		}
 	}
 	if s.Method == "" {
@@ -86,10 +86,10 @@ func (s *ServiceCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, next 
 
 	// SEC-2: Re-validate scheme after flowvar substitution to prevent SSRF.
 	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
-		return fmt.Errorf("apigee_service_callout: resolved target_url has invalid scheme: %q", targetURL)
+		return fmt.Errorf("service_callout: resolved target_url has invalid scheme: %q", targetURL)
 	}
 
-	debugLog(r, s.logger, "apigee_service_callout: executing",
+	debugLog(r, s.logger, "service_callout: executing",
 		zap.String("method", s.Method),
 		zap.String("url", targetURL),
 		zap.String("response_var", s.ResponseVar),
@@ -107,19 +107,19 @@ func (s *ServiceCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, next 
 
 	req, err := http.NewRequestWithContext(ctx, s.Method, targetURL, bodyReader)
 	if err != nil {
-		return fmt.Errorf("apigee_service_callout: building request: %w", err)
+		return fmt.Errorf("service_callout: building request: %w", err)
 	}
 
 	// C1: Use the shared client provisioned once in Provision.
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("apigee_service_callout: executing request: %w", err)
+		return fmt.Errorf("service_callout: executing request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("apigee_service_callout: reading response: %w", err)
+		return fmt.Errorf("service_callout: reading response: %w", err)
 	}
 
 	prefix := s.ResponseVar
@@ -130,7 +130,7 @@ func (s *ServiceCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, next 
 	fs.Set(prefix+".status", resp.Status)
 	fs.Set(prefix+".statusCode", fmt.Sprintf("%d", resp.StatusCode))
 
-	debugLog(r, s.logger, "apigee_service_callout: response",
+	debugLog(r, s.logger, "service_callout: response",
 		zap.String("url", targetURL),
 		zap.Int("status", resp.StatusCode),
 		zap.String("response_var", prefix),
@@ -156,7 +156,7 @@ func resolveFlowVars(s string, fs *FlowState) string {
 func parseServiceCalloutCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
 	var s ServiceCallout
 	for h.Next() {
-		// apigee_service_callout <policy_name> [against <url>]
+		// service_callout <policy_name> [against <url>]
 		// The policy name argument is informational; URL may follow.
 		args := h.RemainingArgs()
 		for i := 0; i < len(args); i++ {

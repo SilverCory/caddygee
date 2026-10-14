@@ -16,10 +16,10 @@ import (
 
 func init() {
 	caddy.RegisterModule(AssignMessage{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_assign_message", parseAssignMessageCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("assign_message", parseAssignMessageCaddyfile)
 }
 
-// AssignMessage is the apigee_assign_message Caddy module.
+// AssignMessage is the assign_message Caddy module.
 // It reads flow state variables and applies them to the HTTP request or response.
 type AssignMessage struct {
 	// SetHeaders maps header name → value. Values support {flowvar.X} substitution.
@@ -39,7 +39,7 @@ type AssignMessage struct {
 // CaddyModule returns the Caddy module metadata.
 func (AssignMessage) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_assign_message",
+		ID:  "http.handlers.assign_message",
 		New: func() caddy.Module { return new(AssignMessage) },
 	}
 }
@@ -51,7 +51,7 @@ func (a *AssignMessage) Provision(ctx caddy.Context) error {
 		a.Phase = "request"
 	}
 	if a.Phase != "request" && a.Phase != "response" {
-		return fmt.Errorf("apigee_assign_message: phase must be 'request' or 'response', got %q", a.Phase)
+		return fmt.Errorf("assign_message: phase must be 'request' or 'response', got %q", a.Phase)
 	}
 	return nil
 }
@@ -60,7 +60,7 @@ func (a *AssignMessage) Provision(ctx caddy.Context) error {
 func (a AssignMessage) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	fs, _ := GetFlowState(r.Context()) // nil-safe: resolve functions check for nil
 
-	debugLog(r, a.logger, "apigee_assign_message",
+	debugLog(r, a.logger, "assign_message",
 		zap.String("phase", a.Phase),
 		zap.Any("set_headers", a.SetHeaders),
 		zap.Strings("remove_headers", a.RemoveHeaders),

@@ -17,10 +17,10 @@ import (
 
 func init() {
 	caddy.RegisterModule(Conditional{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_conditional", parseConditionalCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("when", parseConditionalCaddyfile)
 }
 
-// Conditional is the apigee_conditional Caddy module.
+// Conditional is the when Caddy module.
 // It evaluates an Apigee condition expression at request time and only invokes
 // its inner handler when the condition is true. The condition is evaluated
 // against the current request and flow variables.
@@ -39,7 +39,7 @@ type Conditional struct {
 // CaddyModule returns the Caddy module metadata.
 func (Conditional) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_conditional",
+		ID:  "http.handlers.when",
 		New: func() caddy.Module { return new(Conditional) },
 	}
 }
@@ -48,29 +48,29 @@ func (Conditional) CaddyModule() caddy.ModuleInfo {
 func (c *Conditional) Provision(ctx caddy.Context) error {
 	c.logger = ctx.Logger()
 	if c.Condition == "" {
-		return fmt.Errorf("apigee_conditional: condition is required")
+		return fmt.Errorf("when: condition is required")
 	}
 	if len(c.Inner) == 0 {
-		return fmt.Errorf("apigee_conditional: inner handler is required")
+		return fmt.Errorf("when: inner handler is required")
 	}
 
 	// Decode the handler module ID from the inner JSON.
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(c.Inner, &m); err != nil {
-		return fmt.Errorf("apigee_conditional: decoding inner handler: %w", err)
+		return fmt.Errorf("when: decoding inner handler: %w", err)
 	}
 	var handlerID string
 	if err := json.Unmarshal(m["handler"], &handlerID); err != nil {
-		return fmt.Errorf("apigee_conditional: reading inner handler id: %w", err)
+		return fmt.Errorf("when: reading inner handler id: %w", err)
 	}
 
 	val, err := ctx.LoadModule(c, "Inner")
 	if err != nil {
-		return fmt.Errorf("apigee_conditional: loading inner module %q: %w", handlerID, err)
+		return fmt.Errorf("when: loading inner module %q: %w", handlerID, err)
 	}
 	h, ok := val.(caddyhttp.MiddlewareHandler)
 	if !ok {
-		return fmt.Errorf("apigee_conditional: inner module %q does not implement MiddlewareHandler", handlerID)
+		return fmt.Errorf("when: inner module %q does not implement MiddlewareHandler", handlerID)
 	}
 	c.inner = h
 	return nil
@@ -80,7 +80,7 @@ func (c *Conditional) Provision(ctx caddy.Context) error {
 func (c *Conditional) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	fs, _ := GetFlowState(r.Context())
 	matched := evalCondition(c.Condition, r, fs)
-	debugLog(r, c.logger, "apigee_conditional: evaluated",
+	debugLog(r, c.logger, "when: evaluated",
 		zap.String("condition", c.Condition),
 		zap.Bool("matched", matched),
 	)
@@ -389,11 +389,11 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 	for h.Next() {
 		args := h.RemainingArgs()
 		if len(args) > 0 {
-			c.Condition = args[0]
+			c.Condition = strings.Join(args, " ")
 		}
 		// Parse the inner handler block, e.g.:
-		//   apigee_conditional "cond" {
-		//       reverse_proxy https://example.com
+		//   when environment.name = "preview" {
+		//       spike_arrest 10ps
 		//   }
 		for h.NextBlock(0) {
 			innerDirective := h.Val()
@@ -420,15 +420,15 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 						jsonString(host),
 					))
 				}
-			case "apigee_google_auth":
+			case "google_auth":
 				if len(innerArgs) == 0 {
 					return nil, h.ArgErr()
 				}
 				c.Inner = json.RawMessage(fmt.Sprintf(
-					`{"handler":"apigee_google_auth","audience":%s}`,
+					`{"handler":"google_auth","audience":%s}`,
 					jsonString(innerArgs[0]),
 				))
-			case "apigee_verify_jwt":
+			case "verify_jwt":
 				var algorithm, jwksURI, publicKey, issuer, audience, policyName string
 				for h.NextBlock(1) {
 					switch h.Val() {
@@ -458,7 +458,7 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 						}
 					}
 				}
-				obj := fmt.Sprintf(`{"handler":"apigee_verify_jwt","algorithm":%s,"policy_name":%s`,
+				obj := fmt.Sprintf(`{"handler":"verify_jwt","algorithm":%s,"policy_name":%s`,
 					jsonString(algorithm), jsonString(policyName))
 				if jwksURI != "" {
 					obj += fmt.Sprintf(`,"jwks_uri":%s`, jsonString(jwksURI))
@@ -474,7 +474,7 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 				}
 				obj += `}`
 				c.Inner = json.RawMessage(obj)
-			case "apigee_raise_fault":
+			case "raise_fault":
 				var statusCode int
 				var body string
 				for h.NextBlock(1) {
@@ -489,13 +489,13 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 						}
 					}
 				}
-				obj := fmt.Sprintf(`{"handler":"apigee_raise_fault","status_code":%d`, statusCode)
+				obj := fmt.Sprintf(`{"handler":"raise_fault","status_code":%d`, statusCode)
 				if body != "" {
 					obj += fmt.Sprintf(`,"body":%s`, jsonString(body))
 				}
 				obj += `}`
 				c.Inner = json.RawMessage(obj)
-			case "apigee_spike_arrest":
+			case "spike_arrest":
 				var rate string
 				if len(innerArgs) > 0 {
 					rate = innerArgs[0]
@@ -508,15 +508,15 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 						}
 					}
 				}
-				c.Inner = json.RawMessage(fmt.Sprintf(`{"handler":"apigee_spike_arrest","rate":%s}`, jsonString(rate)))
-			case "apigee_cors":
+				c.Inner = json.RawMessage(fmt.Sprintf(`{"handler":"spike_arrest","rate":%s}`, jsonString(rate)))
+			case "cors":
 				// Drain the block; CORS config is fully in JSON.
 				for h.NextBlock(1) {
 					_ = h.Val()
 					_ = h.RemainingArgs()
 				}
-				c.Inner = json.RawMessage(`{"handler":"apigee_cors"}`)
-			case "apigee_verify_api_key":
+				c.Inner = json.RawMessage(`{"handler":"cors"}`)
+			case "verify_api_key":
 				var apiKeyRef string
 				for h.NextBlock(1) {
 					switch h.Val() {
@@ -526,95 +526,88 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 						}
 					}
 				}
-				obj := `{"handler":"apigee_verify_api_key"`
+				obj := `{"handler":"verify_api_key"`
 				if apiKeyRef != "" {
 					obj += fmt.Sprintf(`,"api_key_ref":%s`, jsonString(apiKeyRef))
 				}
 				obj += `}`
 				c.Inner = json.RawMessage(obj)
-			case "apigee_extract_variables":
-			var prefix string
-			headerPatterns := make(map[string]string)
-			var pathPatterns []string
-			for h.NextBlock(1) {
-				switch h.Val() {
-				case "prefix":
-					if h.NextArg() {
-						prefix = h.Val()
-					}
-				case "header_pattern":
-					args := h.RemainingArgs()
-					if len(args) >= 2 {
-						headerPatterns[args[0]] = args[1]
-					}
-				case "path_pattern":
-					if h.NextArg() {
-						pathPatterns = append(pathPatterns, h.Val())
-					}
-				default:
-					_ = h.RemainingArgs()
-				}
-			}
-			obj := `{"handler":"apigee_extract_variables","ignore_unresolved":true`
-			if prefix != "" {
-				obj += fmt.Sprintf(`,"prefix":%s`, jsonString(prefix))
-			}
-			if len(headerPatterns) > 0 {
-				hpBytes, _ := json.Marshal(headerPatterns)
-				obj += fmt.Sprintf(`,"header_patterns":%s`, string(hpBytes))
-			}
-			if len(pathPatterns) > 0 {
-				ppBytes, _ := json.Marshal(pathPatterns)
-				obj += fmt.Sprintf(`,"path_patterns":%s`, string(ppBytes))
-			}
-			obj += `}`
-			c.Inner = json.RawMessage(obj)
-		case "apigee_quota":
-			var allow, interval int
-			var identifierRef string
-			for h.NextBlock(1) {
-				switch h.Val() {
-				case "allow":
-					if h.NextArg() {
-						fmt.Sscanf(h.Val(), "%d", &allow)
-					}
-				case "interval":
-					if h.NextArg() {
-						fmt.Sscanf(h.Val(), "%d", &interval)
-					}
-				case "identifier_ref":
-					if h.NextArg() {
-						identifierRef = h.Val()
+			case "extract_vars":
+				var prefix string
+				headerPatterns := make(map[string]string)
+				var pathPatterns []string
+				for h.NextBlock(1) {
+					switch h.Val() {
+					case "prefix":
+						if h.NextArg() {
+							prefix = h.Val()
+						}
+					case "header_pattern":
+						args := h.RemainingArgs()
+						if len(args) >= 2 {
+							headerPatterns[args[0]] = args[1]
+						}
+					case "path_pattern":
+						if h.NextArg() {
+							pathPatterns = append(pathPatterns, h.Val())
+						}
+					default:
+						_ = h.RemainingArgs()
 					}
 				}
-			}
-			obj := fmt.Sprintf(`{"handler":"apigee_quota","allow":%d,"interval":%d`, allow, interval)
-			if identifierRef != "" {
-				obj += fmt.Sprintf(`,"identifier_ref":%s`, jsonString(identifierRef))
-			}
-			obj += `}`
-			c.Inner = json.RawMessage(obj)
-		case "apigee_kvm":
-			entries := make(map[string]string)
-			for h.NextBlock(1) {
-				switch h.Val() {
-				case "entry":
-					args := h.RemainingArgs()
-					if len(args) >= 2 {
-						entries[args[0]] = args[1]
+				obj := `{"handler":"extract_vars","ignore_unresolved":true`
+				if prefix != "" {
+					obj += fmt.Sprintf(`,"prefix":%s`, jsonString(prefix))
+				}
+				if len(headerPatterns) > 0 {
+					hpBytes, _ := json.Marshal(headerPatterns)
+					obj += fmt.Sprintf(`,"header_patterns":%s`, string(hpBytes))
+				}
+				if len(pathPatterns) > 0 {
+					ppBytes, _ := json.Marshal(pathPatterns)
+					obj += fmt.Sprintf(`,"path_patterns":%s`, string(ppBytes))
+				}
+				obj += `}`
+				c.Inner = json.RawMessage(obj)
+			case "quota":
+				var allow, interval int
+				var identifierRef string
+				for h.NextBlock(1) {
+					switch h.Val() {
+					case "allow":
+						if h.NextArg() {
+							fmt.Sscanf(h.Val(), "%d", &allow)
+						}
+					case "interval":
+						if h.NextArg() {
+							fmt.Sscanf(h.Val(), "%d", &interval)
+						}
+					case "identifier_ref":
+						if h.NextArg() {
+							identifierRef = h.Val()
+						}
 					}
 				}
-			}
-			entriesBytes, _ := json.Marshal(entries)
-			c.Inner = json.RawMessage(fmt.Sprintf(`{"handler":"apigee_kvm","entries":%s}`, string(entriesBytes)))
-		case "raw_json":
-				// The transpiler bakes full JSON into a raw_json subdirective so
-				// that all handler configs survive the Caddyfile round-trip intact.
-				if len(innerArgs) == 0 {
-					return nil, h.ArgErr()
+				obj := fmt.Sprintf(`{"handler":"quota","allow":%d,"interval":%d`, allow, interval)
+				if identifierRef != "" {
+					obj += fmt.Sprintf(`,"identifier_ref":%s`, jsonString(identifierRef))
 				}
-				c.Inner = json.RawMessage(innerArgs[0])
-			case "apigee_javascript_callout":
+				obj += `}`
+				c.Inner = json.RawMessage(obj)
+			case "kvm":
+				entries := make(map[string]string)
+				for h.NextBlock(1) {
+					switch h.Val() {
+					case "entry":
+						args := h.RemainingArgs()
+						if len(args) >= 2 {
+							entries[args[0]] = args[1]
+						}
+					}
+				}
+				entriesBytes, _ := json.Marshal(entries)
+				c.Inner = json.RawMessage(fmt.Sprintf(`{"handler":"kvm","entries":%s}`, string(entriesBytes)))
+			case "js_callout":
 				// Parse the nested source/timeout_ms block.
 				var source string
 				var timeoutMs int
@@ -630,7 +623,7 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 						}
 					}
 				}
-				obj := fmt.Sprintf(`{"handler":"apigee_javascript_callout","source":%s`, jsonString(source))
+				obj := fmt.Sprintf(`{"handler":"js_callout","source":%s`, jsonString(source))
 				if timeoutMs > 0 {
 					obj += fmt.Sprintf(`,"timeout_ms":%d`, timeoutMs)
 				}
@@ -639,7 +632,7 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 			default:
 				// For handlers with a sub-block, drain the block without capturing
 				// it — the inner handler key alone is sufficient for zero-config
-				// handlers (e.g. apigee_assign_message, apigee_raise_fault, etc.)
+				// handlers (e.g. assign_message, raise_fault, etc.)
 				// that carry all their config at provision time.
 				for h.NextBlock(1) {
 					_ = h.Val()
@@ -650,10 +643,10 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 		}
 	}
 	if c.Condition == "" {
-		return nil, fmt.Errorf("apigee_conditional: condition argument is required")
+		return nil, fmt.Errorf("when: condition argument is required")
 	}
 	if len(c.Inner) == 0 {
-		return nil, fmt.Errorf("apigee_conditional: inner handler block is required")
+		return nil, fmt.Errorf("when: inner handler block is required")
 	}
 	return &c, nil
 }

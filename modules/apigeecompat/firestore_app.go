@@ -22,7 +22,7 @@ func init() {
 //
 //	{
 //	    "apps": {
-//	        "apigee_firestore": {
+//	        "firestore": {
 //	            "project_id": "my-gcp-project"
 //	        }
 //	    }
@@ -44,7 +44,7 @@ type FirestoreApp struct {
 // CaddyModule returns the Caddy module metadata.
 func (FirestoreApp) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "apigee_firestore",
+		ID:  "firestore",
 		New: func() caddy.Module { return new(FirestoreApp) },
 	}
 }
@@ -53,7 +53,7 @@ func (FirestoreApp) CaddyModule() caddy.ModuleInfo {
 func (f *FirestoreApp) Provision(ctx caddy.Context) error {
 	f.logger = ctx.Logger()
 	if f.ProjectID == "" {
-		return fmt.Errorf("apigee_firestore: project_id is required")
+		return fmt.Errorf("firestore: project_id is required")
 	}
 	dbID := f.DatabaseID
 	if dbID == "" {
@@ -63,10 +63,10 @@ func (f *FirestoreApp) Provision(ctx caddy.Context) error {
 	var opts []option.ClientOption
 	client, err := firestore.NewClientWithDatabase(context.Background(), f.ProjectID, dbID, opts...)
 	if err != nil {
-		return fmt.Errorf("apigee_firestore: creating client: %w", err)
+		return fmt.Errorf("firestore: creating client: %w", err)
 	}
 	f.client = client
-	f.logger.Info("apigee_firestore: connected",
+	f.logger.Info("firestore: connected",
 		zap.String("project", f.ProjectID),
 		zap.String("database", dbID))
 	return nil
@@ -91,7 +91,7 @@ func (f *FirestoreApp) Client() *firestore.Client {
 // GetFirestoreApp retrieves the FirestoreApp from the Caddy context, if configured.
 // Returns nil, false when the app is not configured (Firestore features disabled).
 func GetFirestoreApp(ctx caddy.Context) (*FirestoreApp, bool) {
-	val, err := ctx.AppIfConfigured("apigee_firestore")
+	val, err := ctx.AppIfConfigured("firestore")
 	if err != nil {
 		return nil, false
 	}

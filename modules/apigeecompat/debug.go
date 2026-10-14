@@ -20,7 +20,7 @@ func withDebug(ctx context.Context) context.Context {
 //   - Header:      X-Apigee-Debug: 1  (or any non-empty value)
 //   - Query param: ?_debug=1           (or any non-empty value)
 //
-// The flag is set by apigee_state on every request so all downstream handlers
+// The flag is set by flow_state on every request so all downstream handlers
 // can check it without re-inspecting the request.
 func isDebug(r *http.Request) bool {
 	v, ok := r.Context().Value(debugContextKey{}).(bool)

@@ -14,10 +14,10 @@ import (
 
 func init() {
 	caddy.RegisterModule(ExtractVariables{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_extract_variables", parseExtractVariablesCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("extract_vars", parseExtractVariablesCaddyfile)
 }
 
-// ExtractVariables is the apigee_extract_variables Caddy module.
+// ExtractVariables is the extract_vars Caddy module.
 // It extracts values from headers, query parameters, and the request path
 // using Apigee-style {varname} patterns and stores them as flow variables
 // under a configured prefix.
@@ -45,7 +45,7 @@ type ExtractVariables struct {
 // CaddyModule returns the Caddy module metadata.
 func (ExtractVariables) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_extract_variables",
+		ID:  "http.handlers.extract_vars",
 		New: func() caddy.Module { return new(ExtractVariables) },
 	}
 }
@@ -73,7 +73,7 @@ func (ev *ExtractVariables) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 		for name, extracted := range vars {
 			key := ev.varKey(name)
 			fs.Set(key, extracted)
-			debugLog(r, ev.logger, "apigee_extract_variables: extracted header var",
+			debugLog(r, ev.logger, "extract_vars: extracted header var",
 				zap.String("header", headerName),
 				zap.String("var", key),
 				zap.String("value", extracted),
@@ -90,7 +90,7 @@ func (ev *ExtractVariables) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 		for name, extracted := range vars {
 			key := ev.varKey(name)
 			fs.Set(key, extracted)
-			debugLog(r, ev.logger, "apigee_extract_variables: extracted path var",
+			debugLog(r, ev.logger, "extract_vars: extracted path var",
 				zap.String("pattern", pattern),
 				zap.String("var", key),
 				zap.String("value", extracted),

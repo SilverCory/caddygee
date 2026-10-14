@@ -208,8 +208,9 @@ type ServiceCallout struct {
 
 // CalloutRequest describes the outbound request in a ServiceCallout.
 type CalloutRequest struct {
-	Variable string   `xml:"variable,attr"`
-	Headers  []Header `xml:"Set>Headers>Header"`
+	Variable   string   `xml:"variable,attr"`
+	SetHeaders []Header `xml:"Set>Headers>Header"`
+	AddHeaders []Header `xml:"Add>Headers>Header"`
 }
 
 // RaiseFault holds parsed config for a <RaiseFault> policy.
@@ -251,7 +252,7 @@ type JWKS struct {
 // JavaScriptCallout holds parsed config for a <Javascript> policy.
 type JavaScriptCallout struct {
 	// ResourceURL references an external JS file (e.g. "jsc://my-script.js").
-	// Only inline Source is supported by the apigee_javascript_callout module;
+	// Only inline Source is supported by the js_callout module;
 	// a ResourceURL-only policy will be emitted as an unsupported handler.
 	ResourceURL string `xml:"ResourceURL"`
 	// Source is the inline JavaScript source code.
@@ -333,9 +334,10 @@ type QuotaRef struct {
 
 // KVMPolicy holds parsed config for a <KeyValueMapOperations> policy.
 type KVMPolicy struct {
-	MapIdentifier string      `xml:"mapIdentifier,attr"`
-	InitialEntries []KVMEntry `xml:"InitialEntries>Entry"`
-	Gets          []KVMGet   `xml:"Get"`
+	MapIdentifier    string     `xml:"mapIdentifier,attr"`
+	ExpiryTimeInSecs int        `xml:"ExpiryTimeInSecs"`
+	InitialEntries   []KVMEntry `xml:"InitialEntries>Entry"`
+	Gets             []KVMGet   `xml:"Get"`
 }
 
 // KVMEntry is a static key-value pair in the map's initial entries.

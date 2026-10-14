@@ -20,10 +20,10 @@ import (
 
 func init() {
 	caddy.RegisterModule(JavaScriptCallout{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_javascript_callout", parseJavaScriptCalloutCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("js_callout", parseJavaScriptCalloutCaddyfile)
 }
 
-// JavaScriptCallout is the apigee_javascript_callout Caddy module.
+// JavaScriptCallout is the js_callout Caddy module.
 // It executes an inline JavaScript snippet that can read and write Apigee
 // flow variables via the context.getVariable / context.setVariable API.
 //
@@ -53,7 +53,7 @@ type JavaScriptCallout struct {
 // CaddyModule returns the Caddy module metadata.
 func (JavaScriptCallout) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_javascript_callout",
+		ID:  "http.handlers.js_callout",
 		New: func() caddy.Module { return new(JavaScriptCallout) },
 	}
 }
@@ -62,21 +62,21 @@ func (JavaScriptCallout) CaddyModule() caddy.ModuleInfo {
 func (j *JavaScriptCallout) Provision(ctx caddy.Context) error {
 	j.logger = ctx.Logger()
 	if j.Source == "" {
-		return fmt.Errorf("apigee_javascript_callout: source is required")
+		return fmt.Errorf("js_callout: source is required")
 	}
 	if j.TimeoutMs <= 0 {
 		j.TimeoutMs = 200
 	}
 	prog, err := goja.Compile("apigee_script", j.Source, false)
 	if err != nil {
-		return fmt.Errorf("apigee_javascript_callout: compile error: %w", err)
+		return fmt.Errorf("js_callout: compile error: %w", err)
 	}
 	j.program = prog
 
 	if j.LibDir != "" {
 		libProgs, err := compileLibDir(j.LibDir)
 		if err != nil {
-			return fmt.Errorf("apigee_javascript_callout: lib_dir: %w", err)
+			return fmt.Errorf("js_callout: lib_dir: %w", err)
 		}
 		j.libProgs = libProgs
 	}
@@ -135,7 +135,7 @@ func compileLibDir(dir string) ([]*goja.Program, error) {
 func (j *JavaScriptCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	fs, ok := GetFlowState(r.Context())
 	if !ok {
-		// apigee_state was not in the chain — skip execution and continue.
+		// flow_state was not in the chain — skip execution and continue.
 		return next.ServeHTTP(w, r)
 	}
 
@@ -158,7 +158,7 @@ func (j *JavaScriptCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 		}
 		return vm.ToValue(val)
 	}); err != nil {
-		return fmt.Errorf("apigee_javascript_callout: setting getVariable: %w", err)
+		return fmt.Errorf("js_callout: setting getVariable: %w", err)
 	}
 	if err := ctx.Set("setVariable", func(call goja.FunctionCall) goja.Value {
 		name := call.Argument(0).String()
@@ -166,21 +166,21 @@ func (j *JavaScriptCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 		fs.Set(name, val)
 		return goja.Undefined()
 	}); err != nil {
-		return fmt.Errorf("apigee_javascript_callout: setting setVariable: %w", err)
+		return fmt.Errorf("js_callout: setting setVariable: %w", err)
 	}
 	if err := ctx.Set("flow", "PROXY_REQ_FLOW"); err != nil {
-		return fmt.Errorf("apigee_javascript_callout: setting flow: %w", err)
+		return fmt.Errorf("js_callout: setting flow: %w", err)
 	}
 
 	// Expose request metadata on context for convenience.
 	if err := ctx.Set("requestMethod", r.Method); err != nil {
-		return fmt.Errorf("apigee_javascript_callout: setting requestMethod: %w", err)
+		return fmt.Errorf("js_callout: setting requestMethod: %w", err)
 	}
 	if err := ctx.Set("requestPath", r.URL.Path); err != nil {
-		return fmt.Errorf("apigee_javascript_callout: setting requestPath: %w", err)
+		return fmt.Errorf("js_callout: setting requestPath: %w", err)
 	}
 	if err := ctx.Set("requestHost", r.Host); err != nil {
-		return fmt.Errorf("apigee_javascript_callout: setting requestHost: %w", err)
+		return fmt.Errorf("js_callout: setting requestHost: %w", err)
 	}
 
 	// Build a read-only headers map: context.requestHeaders["Header-Name"] -> first value.
@@ -188,12 +188,12 @@ func (j *JavaScriptCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 	for name, vals := range r.Header {
 		if len(vals) > 0 {
 			if err := hdrs.Set(name, vals[0]); err != nil {
-				return fmt.Errorf("apigee_javascript_callout: setting header %q: %w", name, err)
+				return fmt.Errorf("js_callout: setting header %q: %w", name, err)
 			}
 		}
 	}
 	if err := ctx.Set("requestHeaders", hdrs); err != nil {
-		return fmt.Errorf("apigee_javascript_callout: setting requestHeaders: %w", err)
+		return fmt.Errorf("js_callout: setting requestHeaders: %w", err)
 	}
 
 	// Build a query params map: context.queryParams["param"] -> first value.
@@ -201,19 +201,19 @@ func (j *JavaScriptCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 	for name, vals := range r.URL.Query() {
 		if len(vals) > 0 {
 			if err := qp.Set(name, vals[0]); err != nil {
-				return fmt.Errorf("apigee_javascript_callout: setting query param %q: %w", name, err)
+				return fmt.Errorf("js_callout: setting query param %q: %w", name, err)
 			}
 		}
 	}
 	if err := ctx.Set("queryParams", qp); err != nil {
-		return fmt.Errorf("apigee_javascript_callout: setting queryParams: %w", err)
+		return fmt.Errorf("js_callout: setting queryParams: %w", err)
 	}
 
 	if err := vm.Set("context", ctx); err != nil {
-		return fmt.Errorf("apigee_javascript_callout: setting context: %w", err)
+		return fmt.Errorf("js_callout: setting context: %w", err)
 	}
 
-	debugLog(r, j.logger, "apigee_javascript_callout: executing",
+	debugLog(r, j.logger, "js_callout: executing",
 		zap.Int("timeout_ms", j.TimeoutMs),
 	)
 
@@ -229,19 +229,19 @@ func (j *JavaScriptCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 	select {
 	case err := <-done:
 		if err != nil {
-			debugLog(r, j.logger, "apigee_javascript_callout: script error",
+			debugLog(r, j.logger, "js_callout: script error",
 				zap.Error(err),
 			)
-			return fmt.Errorf("apigee_javascript_callout: script error: %w", err)
+			return fmt.Errorf("js_callout: script error: %w", err)
 		}
-		debugLog(r, j.logger, "apigee_javascript_callout: script completed")
+		debugLog(r, j.logger, "js_callout: script completed")
 	case <-time.After(timeout):
 		vm.Interrupt(fmt.Errorf("script exceeded timeout of %dms", j.TimeoutMs))
 		<-done // drain the goroutine
-		debugLog(r, j.logger, "apigee_javascript_callout: script timed out",
+		debugLog(r, j.logger, "js_callout: script timed out",
 			zap.Int("timeout_ms", j.TimeoutMs),
 		)
-		return fmt.Errorf("apigee_javascript_callout: script timed out after %dms", j.TimeoutMs)
+		return fmt.Errorf("js_callout: script timed out after %dms", j.TimeoutMs)
 	}
 
 	return next.ServeHTTP(w, r)

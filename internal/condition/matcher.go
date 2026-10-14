@@ -159,7 +159,7 @@ func (m *CaddyMatcher) applyComparison(c Comparison) {
 			}
 			return
 		}
-		// environment.name is a runtime flow variable handled by apigee_conditional
+		// environment.name is a runtime flow variable handled by when
 		// at request time — silently drop it from the static matcher.
 		if varName == "environment.name" {
 			return

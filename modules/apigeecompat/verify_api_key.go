@@ -21,15 +21,15 @@ import (
 
 func init() {
 	caddy.RegisterModule(VerifyAPIKey{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_verify_api_key", parseVerifyAPIKeyCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("verify_api_key", parseVerifyAPIKeyCaddyfile)
 }
 
-// VerifyAPIKey is the apigee_verify_api_key Caddy module.
+// VerifyAPIKey is the verify_api_key Caddy module.
 //
-// When the apigee_firestore app is configured, it enforces API key validation
+// When the firestore app is configured, it enforces API key validation
 // by looking up the key in Firestore collection "api_keys". A valid key document
 // must exist and have enabled=true. Quota metadata from the document is written
-// into flow variables for downstream apigee_quota handlers.
+// into flow variables for downstream quota handlers.
 //
 // Without Firestore configured, it falls back to passthrough mode (logs a warning).
 //
@@ -76,7 +76,7 @@ type apiKeyDoc struct {
 // CaddyModule returns the Caddy module metadata.
 func (VerifyAPIKey) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_verify_api_key",
+		ID:  "http.handlers.verify_api_key",
 		New: func() caddy.Module { return new(VerifyAPIKey) },
 	}
 }
@@ -94,10 +94,10 @@ func (v *VerifyAPIKey) Provision(ctx caddy.Context) error {
 	if app, ok := GetFirestoreApp(ctx); ok {
 		v.fsClient = app.Client()
 		v.keyCache = newTTLCache[apiKeyDoc](5 * time.Minute)
-		v.logger.Info("apigee_verify_api_key: Firestore enforcement enabled",
+		v.logger.Info("verify_api_key: Firestore enforcement enabled",
 			zap.String("collection", v.Collection))
 	} else {
-		v.logger.Warn("apigee_verify_api_key: Firestore not configured — passthrough mode (not enforced)",
+		v.logger.Warn("verify_api_key: Firestore not configured — passthrough mode (not enforced)",
 			zap.String("api_key_ref", v.APIKeyRef))
 	}
 	return nil
@@ -112,7 +112,7 @@ func (v *VerifyAPIKey) ServeHTTP(w http.ResponseWriter, r *http.Request, next ca
 
 	key := v.resolveKey(r)
 	if key == "" {
-		debugLog(r, v.logger, "apigee_verify_api_key: rejected — missing key",
+		debugLog(r, v.logger, "verify_api_key: rejected — missing key",
 			zap.String("policy", v.PolicyName),
 		)
 		return v.reject(w, http.StatusUnauthorized, "MissingAPIKey", "API key is required")
@@ -120,18 +120,18 @@ func (v *VerifyAPIKey) ServeHTTP(w http.ResponseWriter, r *http.Request, next ca
 
 	doc, err := v.lookupKey(r.Context(), key)
 	if err != nil {
-		v.logger.Error("apigee_verify_api_key: Firestore lookup failed",
+		v.logger.Error("verify_api_key: Firestore lookup failed",
 			zap.String("error", err.Error()))
 		return v.reject(w, http.StatusUnauthorized, "InvalidAPIKey", "API key validation failed")
 	}
 	if doc == nil || !doc.Enabled {
-		debugLog(r, v.logger, "apigee_verify_api_key: rejected — invalid or disabled key",
+		debugLog(r, v.logger, "verify_api_key: rejected — invalid or disabled key",
 			zap.String("policy", v.PolicyName),
 		)
 		return v.reject(w, http.StatusUnauthorized, "InvalidAPIKey", "Invalid or disabled API key")
 	}
 
-	// Write quota metadata into flow state for downstream apigee_quota.
+	// Write quota metadata into flow state for downstream quota.
 	if fs, ok := GetFlowState(r.Context()); ok {
 		prefix := "verifyapikey." + v.PolicyName
 		fs.Set(prefix+".app_id", doc.AppID)
@@ -143,7 +143,7 @@ func (v *VerifyAPIKey) ServeHTTP(w http.ResponseWriter, r *http.Request, next ca
 		}
 	}
 
-	debugLog(r, v.logger, "apigee_verify_api_key: accepted",
+	debugLog(r, v.logger, "verify_api_key: accepted",
 		zap.String("policy", v.PolicyName),
 		zap.String("app_id", doc.AppID),
 	)

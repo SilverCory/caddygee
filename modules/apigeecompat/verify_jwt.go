@@ -22,10 +22,10 @@ import (
 
 func init() {
 	caddy.RegisterModule(VerifyJWT{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_verify_jwt", parseVerifyJWTCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("verify_jwt", parseVerifyJWTCaddyfile)
 }
 
-// VerifyJWT is the apigee_verify_jwt Caddy module.
+// VerifyJWT is the verify_jwt Caddy module.
 // It verifies a Bearer JWT from the Authorization header and stores the decoded
 // claims as flow variables named jwt.<policy_name>.decoded.claim.<claimName>.
 //
@@ -56,7 +56,7 @@ type VerifyJWT struct {
 // CaddyModule returns the Caddy module metadata.
 func (VerifyJWT) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_verify_jwt",
+		ID:  "http.handlers.verify_jwt",
 		New: func() caddy.Module { return new(VerifyJWT) },
 	}
 }
@@ -65,7 +65,7 @@ func (VerifyJWT) CaddyModule() caddy.ModuleInfo {
 func (v *VerifyJWT) Provision(ctx caddy.Context) error {
 	v.logger = ctx.Logger()
 	if v.PolicyName == "" {
-		return fmt.Errorf("apigee_verify_jwt: policy_name is required")
+		return fmt.Errorf("verify_jwt: policy_name is required")
 	}
 	if v.Algorithm == "" {
 		v.Algorithm = "RS256"
@@ -73,15 +73,15 @@ func (v *VerifyJWT) Provision(ctx caddy.Context) error {
 	switch strings.ToUpper(v.Algorithm) {
 	case "RS256", "RS512":
 	default:
-		return fmt.Errorf("apigee_verify_jwt: unsupported algorithm %q (RS256 and RS512 supported)", v.Algorithm)
+		return fmt.Errorf("verify_jwt: unsupported algorithm %q (RS256 and RS512 supported)", v.Algorithm)
 	}
 	if v.PublicKey == "" && v.JWKSURI == "" {
-		return fmt.Errorf("apigee_verify_jwt: one of public_key or jwks_uri is required")
+		return fmt.Errorf("verify_jwt: one of public_key or jwks_uri is required")
 	}
 	if v.PublicKey != "" {
 		key, err := parseRSAPublicKey(v.PublicKey)
 		if err != nil {
-			return fmt.Errorf("apigee_verify_jwt: %w", err)
+			return fmt.Errorf("verify_jwt: %w", err)
 		}
 		v.rsaKey = key
 	}
@@ -94,14 +94,14 @@ func (v *VerifyJWT) Provision(ctx caddy.Context) error {
 func (v *VerifyJWT) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	rawToken := extractBearer(r)
 	if rawToken == "" {
-		debugLog(r, v.logger, "apigee_verify_jwt: rejected — no bearer token",
+		debugLog(r, v.logger, "verify_jwt: rejected — no bearer token",
 			zap.String("policy", v.PolicyName))
 		return v.unauthorized(w, "missing or malformed Authorization header")
 	}
 
 	key, err := v.resolveKey(rawToken)
 	if err != nil {
-		debugLog(r, v.logger, "apigee_verify_jwt: rejected — key resolution failed",
+		debugLog(r, v.logger, "verify_jwt: rejected — key resolution failed",
 			zap.String("policy", v.PolicyName), zap.Error(err))
 		return v.unauthorized(w, "JWT validation failed")
 	}
@@ -109,14 +109,14 @@ func (v *VerifyJWT) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	alg := jose.SignatureAlgorithm(strings.ToUpper(v.Algorithm))
 	tok, err := jwt.ParseSigned(rawToken, []jose.SignatureAlgorithm{alg})
 	if err != nil {
-		debugLog(r, v.logger, "apigee_verify_jwt: rejected — parse failed",
+		debugLog(r, v.logger, "verify_jwt: rejected — parse failed",
 			zap.String("policy", v.PolicyName), zap.Error(err))
 		return v.unauthorized(w, "JWT validation failed")
 	}
 
 	var claims map[string]any
 	if err := tok.Claims(key, &claims); err != nil {
-		debugLog(r, v.logger, "apigee_verify_jwt: rejected — signature invalid",
+		debugLog(r, v.logger, "verify_jwt: rejected — signature invalid",
 			zap.String("policy", v.PolicyName), zap.Error(err))
 		return v.unauthorized(w, "JWT validation failed")
 	}
@@ -126,7 +126,7 @@ func (v *VerifyJWT) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	// Validate standard claims.
 	if v.Issuer != "" {
 		if iss, _ := claims["iss"].(string); iss != v.Issuer {
-			debugLog(r, v.logger, "apigee_verify_jwt: rejected — issuer mismatch",
+			debugLog(r, v.logger, "verify_jwt: rejected — issuer mismatch",
 				zap.String("policy", v.PolicyName),
 				zap.String("got", iss), zap.String("want", v.Issuer))
 			return v.unauthorized(w, "JWT validation failed")
@@ -135,7 +135,7 @@ func (v *VerifyJWT) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	// C2: enforce audience when configured.
 	if v.Audience != "" {
 		if !claimMatchesAudience(claims["aud"], v.Audience) {
-			debugLog(r, v.logger, "apigee_verify_jwt: rejected — audience mismatch",
+			debugLog(r, v.logger, "verify_jwt: rejected — audience mismatch",
 				zap.String("policy", v.PolicyName),
 				zap.Any("got", claims["aud"]), zap.String("want", v.Audience))
 			return v.unauthorized(w, "JWT validation failed")
@@ -145,7 +145,7 @@ func (v *VerifyJWT) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	if nbf, ok := claims["nbf"]; ok {
 		if n, ok := nbf.(float64); ok {
 			if now.Before(time.Unix(int64(n), 0)) {
-				debugLog(r, v.logger, "apigee_verify_jwt: rejected — token not yet valid",
+				debugLog(r, v.logger, "verify_jwt: rejected — token not yet valid",
 					zap.String("policy", v.PolicyName))
 				return v.unauthorized(w, "JWT is not yet valid")
 			}
@@ -155,7 +155,7 @@ func (v *VerifyJWT) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		switch e := exp.(type) {
 		case float64:
 			if time.Unix(int64(e), 0).Before(now) {
-				debugLog(r, v.logger, "apigee_verify_jwt: rejected — token expired",
+				debugLog(r, v.logger, "verify_jwt: rejected — token expired",
 					zap.String("policy", v.PolicyName))
 				return v.unauthorized(w, "JWT is expired")
 			}
@@ -171,7 +171,7 @@ func (v *VerifyJWT) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 
 	sub, _ := claims["sub"].(string)
-	debugLog(r, v.logger, "apigee_verify_jwt: accepted",
+	debugLog(r, v.logger, "verify_jwt: accepted",
 		zap.String("policy", v.PolicyName),
 		zap.String("sub", sub),
 		zap.String("iss", fmt.Sprintf("%v", claims["iss"])),

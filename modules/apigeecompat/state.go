@@ -13,10 +13,10 @@ import (
 
 func init() {
 	caddy.RegisterModule(FlowStateManager{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_state", parseFlowStateCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("flow_state", parseFlowStateCaddyfile)
 }
 
-// FlowStateManager is the apigee_state Caddy module.
+// FlowStateManager is the flow_state Caddy module.
 // It must be the first handler in every Caddy route that uses Apigee policy modules.
 // It initialises a fresh FlowState for each request and injects it into the context.
 // It also seeds the environment.name flow variable from the ENVIRONMENT_NAME env var.
@@ -32,7 +32,7 @@ type FlowStateManager struct {
 // CaddyModule returns the Caddy module metadata.
 func (FlowStateManager) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_state",
+		ID:  "http.handlers.flow_state",
 		New: func() caddy.Module { return new(FlowStateManager) },
 	}
 }
@@ -66,7 +66,7 @@ func (f FlowStateManager) ServeHTTP(w http.ResponseWriter, r *http.Request, next
 }
 
 func parseFlowStateCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
-	// apigee_state takes no arguments.
+	// flow_state takes no arguments.
 	for h.Next() {
 		if h.NextArg() {
 			return nil, h.ArgErr()

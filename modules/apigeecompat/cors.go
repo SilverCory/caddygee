@@ -15,10 +15,10 @@ import (
 
 func init() {
 	caddy.RegisterModule(CORS{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_cors", parseCORSCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("cors", parseCORSCaddyfile)
 }
 
-// CORS is the apigee_cors Caddy module.
+// CORS is the cors Caddy module.
 // It adds Access-Control-* response headers and handles OPTIONS preflight
 // requests, equivalent to Apigee's CORS policy.
 type CORS struct {
@@ -41,7 +41,7 @@ type CORS struct {
 // CaddyModule returns the Caddy module metadata.
 func (CORS) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_cors",
+		ID:  "http.handlers.cors",
 		New: func() caddy.Module { return new(CORS) },
 	}
 }
@@ -91,7 +91,7 @@ func (c CORS) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.H
 
 	// Preflight: respond 204 immediately.
 	if r.Method == http.MethodOptions {
-		debugLog(r, c.logger, "apigee_cors: preflight",
+		debugLog(r, c.logger, "cors: preflight",
 			zap.String("origin", origin),
 			zap.String("allow_origin", allowOrigin),
 		)
@@ -99,7 +99,7 @@ func (c CORS) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.H
 		return nil
 	}
 
-	debugLog(r, c.logger, "apigee_cors: headers set",
+	debugLog(r, c.logger, "cors: headers set",
 		zap.String("origin", origin),
 		zap.String("allow_origin", allowOrigin),
 	)

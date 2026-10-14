@@ -17,10 +17,10 @@ import (
 
 func init() {
 	caddy.RegisterModule(SpikeArrest{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_spike_arrest", parseSpikeArrestCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("spike_arrest", parseSpikeArrestCaddyfile)
 }
 
-// SpikeArrest is the apigee_spike_arrest Caddy module.
+// SpikeArrest is the spike_arrest Caddy module.
 // It implements per-server rate limiting using a token bucket algorithm,
 // equivalent to Apigee's SpikeArrest policy. Excess requests are rejected
 // with 429 Too Many Requests.
@@ -41,7 +41,7 @@ type SpikeArrest struct {
 // CaddyModule returns the Caddy module metadata.
 func (SpikeArrest) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_spike_arrest",
+		ID:  "http.handlers.spike_arrest",
 		New: func() caddy.Module { return new(SpikeArrest) },
 	}
 }
@@ -51,32 +51,32 @@ func (sa *SpikeArrest) Provision(ctx caddy.Context) error {
 	sa.logger = ctx.Logger()
 
 	if sa.Rate == "" {
-		return fmt.Errorf("apigee_spike_arrest: rate is required")
+		return fmt.Errorf("spike_arrest: rate is required")
 	}
 
 	rate := strings.TrimSpace(strings.ToLower(sa.Rate))
 	if strings.HasSuffix(rate, "ps") {
 		n, err := strconv.Atoi(strings.TrimSuffix(rate, "ps"))
 		if err != nil || n <= 0 {
-			return fmt.Errorf("apigee_spike_arrest: invalid rate %q", sa.Rate)
+			return fmt.Errorf("spike_arrest: invalid rate %q", sa.Rate)
 		}
 		sa.count = n
 		sa.interval = time.Second
 	} else if strings.HasSuffix(rate, "pm") {
 		n, err := strconv.Atoi(strings.TrimSuffix(rate, "pm"))
 		if err != nil || n <= 0 {
-			return fmt.Errorf("apigee_spike_arrest: invalid rate %q", sa.Rate)
+			return fmt.Errorf("spike_arrest: invalid rate %q", sa.Rate)
 		}
 		sa.count = n
 		sa.interval = time.Minute
 	} else {
-		return fmt.Errorf("apigee_spike_arrest: rate must end with 'ps' or 'pm', got %q", sa.Rate)
+		return fmt.Errorf("spike_arrest: rate must end with 'ps' or 'pm', got %q", sa.Rate)
 	}
 
 	sa.tokens = float64(sa.count)
 	sa.lastRefill = time.Now()
 
-	sa.logger.Info("apigee_spike_arrest configured",
+	sa.logger.Info("spike_arrest configured",
 		zap.String("rate", sa.Rate),
 		zap.Int("count", sa.count),
 		zap.Duration("interval", sa.interval))
@@ -100,7 +100,7 @@ func (sa *SpikeArrest) ServeHTTP(w http.ResponseWriter, r *http.Request, next ca
 
 	if sa.tokens < 1 {
 		sa.mu.Unlock()
-		debugLog(r, sa.logger, "apigee_spike_arrest: rejected",
+		debugLog(r, sa.logger, "spike_arrest: rejected",
 			zap.String("rate", sa.Rate),
 		)
 		w.Header().Set("Content-Type", "application/json")
@@ -113,7 +113,7 @@ func (sa *SpikeArrest) ServeHTTP(w http.ResponseWriter, r *http.Request, next ca
 	sa.tokens--
 	sa.mu.Unlock()
 
-	debugLog(r, sa.logger, "apigee_spike_arrest: allowed",
+	debugLog(r, sa.logger, "spike_arrest: allowed",
 		zap.String("rate", sa.Rate),
 	)
 	return next.ServeHTTP(w, r)
@@ -139,7 +139,7 @@ func parseSpikeArrestCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 		}
 	}
 	if sa.Rate == "" {
-		return nil, fmt.Errorf("apigee_spike_arrest: rate is required")
+		return nil, fmt.Errorf("spike_arrest: rate is required")
 	}
 	return &sa, nil
 }

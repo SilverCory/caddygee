@@ -21,13 +21,13 @@ import (
 
 func init() {
 	caddy.RegisterModule(Quota{})
-	httpcaddyfile.RegisterHandlerDirective("apigee_quota", parseQuotaCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective("quota", parseQuotaCaddyfile)
 }
 
-// Quota is the apigee_quota Caddy module.
+// Quota is the quota Caddy module.
 // It implements per-key quota enforcement using a sliding window counter.
 //
-// When the apigee_firestore app is configured, the counter is stored in Firestore
+// When the firestore app is configured, the counter is stored in Firestore
 // for distributed enforcement across multiple replicas. Without Firestore, it
 // falls back to an in-memory per-process counter.
 //
@@ -43,7 +43,7 @@ func init() {
 //	}
 //
 // The allow/interval values can also be read from flow variables set by
-// apigee_verify_api_key (verifyapikey.<policy>.apiproduct.developer.quota.*).
+// verify_api_key (verifyapikey.<policy>.apiproduct.developer.quota.*).
 // When IdentifierRef is "identifier", the value of the "identifier" flow variable is used.
 type Quota struct {
 	// Allow is the maximum number of requests allowed per interval.
@@ -83,7 +83,7 @@ type quotaBucket struct {
 // CaddyModule returns the Caddy module metadata.
 func (Quota) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.apigee_quota",
+		ID:  "http.handlers.quota",
 		New: func() caddy.Module { return new(Quota) },
 	}
 }
@@ -96,19 +96,19 @@ func (q *Quota) Provision(ctx caddy.Context) error {
 	}
 
 	if q.Allow <= 0 && q.LimitRef == "" {
-		return fmt.Errorf("apigee_quota: allow or limit_ref is required")
+		return fmt.Errorf("quota: allow or limit_ref is required")
 	}
 	if q.Interval <= 0 && q.IntervalRef == "" {
-		return fmt.Errorf("apigee_quota: interval or interval_ref is required")
+		return fmt.Errorf("quota: interval or interval_ref is required")
 	}
 
 	if app, ok := GetFirestoreApp(ctx); ok {
 		q.fsClient = app.Client()
-		q.logger.Info("apigee_quota: Firestore distributed counter enabled",
+		q.logger.Info("quota: Firestore distributed counter enabled",
 			zap.String("collection", q.Collection))
 	} else {
 		q.buckets = make(map[string]*quotaBucket)
-		q.logger.Info("apigee_quota: using in-memory counter (not distributed)")
+		q.logger.Info("quota: using in-memory counter (not distributed)")
 	}
 	return nil
 }
@@ -155,7 +155,7 @@ func (q *Quota) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp
 	if q.fsClient != nil {
 		exceeded, err = q.checkFirestore(r.Context(), id, limit, interval)
 		if err != nil {
-			q.logger.Error("apigee_quota: Firestore check failed, falling back to pass-through",
+			q.logger.Error("quota: Firestore check failed, falling back to pass-through",
 				zap.Error(err))
 			return next.ServeHTTP(w, r)
 		}
@@ -164,7 +164,7 @@ func (q *Quota) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp
 	}
 
 	if exceeded {
-		debugLog(r, q.logger, "apigee_quota: exceeded",
+		debugLog(r, q.logger, "quota: exceeded",
 			zap.String("id", id),
 			zap.Int("limit", limit),
 			zap.Int("interval_secs", interval),
@@ -175,7 +175,7 @@ func (q *Quota) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp
 		return nil
 	}
 
-	debugLog(r, q.logger, "apigee_quota: allowed",
+	debugLog(r, q.logger, "quota: allowed",
 		zap.String("id", id),
 		zap.Int("limit", limit),
 		zap.Int("interval_secs", interval),
