@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test -race -count=1 ./...
+
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build caddy
+        run: CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" ./cmd/caddy/
+
+      - name: Build caddygee-cli
+        run: CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" ./cmd/caddygee/
+
+      - name: Build caddygee-server
+        run: CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" ./cmd/caddygee-server/
