@@ -50,6 +50,7 @@ COPY --from=builder /build/caddy           /usr/bin/caddy
 COPY --from=builder /build/caddygee-cli    /usr/bin/caddygee-cli
 COPY --from=builder /build/caddygee-server /usr/bin/caddygee-server
 COPY entrypoint.sh                          /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Cloud Run injects $PORT (default 8080).
 # caddygee-server deploy endpoint listens on DEPLOY_PORT (default 9090).
