@@ -10,7 +10,7 @@
 // Environment variables:
 //
 //	CONFIG_BUCKET   GCS bucket name holding fragment files (required)
-//	PORT            HTTP port for the deploy endpoint (default: 9090)
+//	DEPLOY_PORT     HTTP port for the deploy endpoint (default: 9090)
 //	CADDY_ADMIN     Caddy admin API address (default: localhost:2019)
 //	CADDYFILE_PATH  Path to write the merged Caddyfile (default: /etc/caddy/Caddyfile)
 //	LISTEN_ADDRESS  Caddy listen address passed to the merger (default: :8080)
@@ -39,18 +39,12 @@ import (
 )
 
 func main() {
-	bucket := mustEnv("CONFIG_BUCKET")
-	audience := mustEnv("CADDYGEE_AUDIENCE") // SEC-1: Cloud Run service URL used as OIDC audience
-	port := envOr("PORT", "9090")
+	bucket := os.Getenv("CONFIG_BUCKET")
+	audience := os.Getenv("CADDYGEE_AUDIENCE")
+	port := envOr("DEPLOY_PORT", "9090")
 	adminAddr := envOr("CADDY_ADMIN", "localhost:2019")
 	caddyfilePath := envOr("CADDYFILE_PATH", "/etc/caddy/Caddyfile")
 	listenAddr := envOr("LISTEN_ADDRESS", ":8080")
-
-	ctx := context.Background()
-	gcs, err := storage.NewClient(ctx)
-	if err != nil {
-		log.Fatalf("creating GCS client: %v", err)
-	}
 
 	srv := &deployServer{
 		bucket:        bucket,
@@ -58,15 +52,27 @@ func main() {
 		adminAddr:     adminAddr,
 		caddyfilePath: caddyfilePath,
 		listenAddr:    listenAddr,
-		gcs:           gcs,
 		httpClient:    &http.Client{Timeout: 30 * time.Second},
 	}
 
-	// Cold start: fetch fragments from GCS and write initial Caddyfile.
-	if err := srv.buildAndWriteCaddyfile(ctx); err != nil {
-		log.Printf("WARNING: cold-start merge failed (no fragments yet?): %v", err)
-		// Write a minimal fallback Caddyfile so Caddy can start.
+	ctx := context.Background()
+
+	if bucket == "" {
+		log.Printf("WARNING: CONFIG_BUCKET not set — running in fallback mode (no GCS, /deploy disabled)")
 		srv.writeFallbackCaddyfile()
+	} else {
+		gcs, err := storage.NewClient(ctx)
+		if err != nil {
+			log.Printf("WARNING: creating GCS client failed: %v — running in fallback mode", err)
+			srv.writeFallbackCaddyfile()
+		} else {
+			srv.gcs = gcs
+			// Cold start: fetch fragments from GCS and write initial Caddyfile.
+			if err := srv.buildAndWriteCaddyfile(ctx); err != nil {
+				log.Printf("WARNING: cold-start merge failed (no fragments yet?): %v", err)
+				srv.writeFallbackCaddyfile()
+			}
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -109,6 +115,14 @@ type deployServer struct {
 func (s *deployServer) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.gcs == nil || s.bucket == "" {
+		http.Error(w, "deploy endpoint disabled: CONFIG_BUCKET not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if s.audience == "" {
+		http.Error(w, "deploy endpoint disabled: CADDYGEE_AUDIENCE not configured", http.StatusServiceUnavailable)
 		return
 	}
 

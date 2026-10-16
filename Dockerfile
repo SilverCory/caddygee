@@ -44,7 +44,8 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata
 
 # Drop privileges — Cloud Run supports non-root containers.
-RUN addgroup -S caddy && adduser -S caddy -G caddy
+RUN addgroup -S caddy && adduser -S caddy -G caddy && \
+    mkdir -p /etc/caddy && chown caddy:caddy /etc/caddy
 
 COPY --from=builder /build/caddy           /usr/bin/caddy
 COPY --from=builder /build/caddygee-cli    /usr/bin/caddygee-cli
