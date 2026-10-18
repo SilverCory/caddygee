@@ -10,10 +10,11 @@
 // Environment variables:
 //
 //	CONFIG_BUCKET   GCS bucket name holding fragment files (required)
-//	DEPLOY_PORT     HTTP port for the deploy endpoint (default: 9090)
-//	CADDY_ADMIN     Caddy admin API address (default: localhost:2019)
-//	CADDYFILE_PATH  Path to write the merged Caddyfile (default: /etc/caddy/Caddyfile)
-//	LISTEN_ADDRESS  Caddy listen address passed to the merger (default: :8080)
+//	DEPLOY_PORT      HTTP port for the deploy endpoint (default: 9090)
+//	CADDY_ADMIN      Caddy admin API address (default: localhost:2019)
+//	CADDYFILE_PATH   Path to write the merged Caddyfile (default: /etc/caddy/Caddyfile)
+//	LISTEN_ADDRESS   Caddy listen address passed to the merger (default: :8080)
+//	TRUSTED_PROXIES  Space-separated CIDR ranges for trusted_proxies (default: GCP LB ranges)
 package main
 
 import (
@@ -46,13 +47,21 @@ func main() {
 	caddyfilePath := envOr("CADDYFILE_PATH", "/etc/caddy/Caddyfile")
 	listenAddr := envOr("LISTEN_ADDRESS", ":8080")
 
+	var trustedProxies []string
+	if raw := os.Getenv("TRUSTED_PROXIES"); raw != "" {
+		for _, cidr := range strings.Fields(raw) {
+			trustedProxies = append(trustedProxies, cidr)
+		}
+	}
+
 	srv := &deployServer{
-		bucket:        bucket,
-		audience:      audience,
-		adminAddr:     adminAddr,
-		caddyfilePath: caddyfilePath,
-		listenAddr:    listenAddr,
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		bucket:         bucket,
+		audience:       audience,
+		adminAddr:      adminAddr,
+		caddyfilePath:  caddyfilePath,
+		listenAddr:     listenAddr,
+		trustedProxies: trustedProxies,
+		httpClient:     &http.Client{Timeout: 30 * time.Second},
 	}
 
 	ctx := context.Background()
@@ -92,14 +101,15 @@ func main() {
 var serviceNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
 type deployServer struct {
-	bucket        string
-	audience      string       // SEC-1: expected OIDC audience (Cloud Run service URL)
-	adminAddr     string
-	caddyfilePath string
-	listenAddr    string
-	gcs           *storage.Client
-	httpClient    *http.Client // HIGH-1: shared client with timeout for admin API calls
-	mu            sync.Mutex   // serialises concurrent deploys
+	bucket         string
+	audience       string       // SEC-1: expected OIDC audience (Cloud Run service URL)
+	adminAddr      string
+	caddyfilePath  string
+	listenAddr     string
+	trustedProxies []string
+	gcs            *storage.Client
+	httpClient     *http.Client // HIGH-1: shared client with timeout for admin API calls
+	mu             sync.Mutex   // serialises concurrent deploys
 }
 
 // handleDeploy handles POST /deploy.
@@ -295,8 +305,9 @@ func (s *deployServer) buildMergedCaddyfile(ctx context.Context, projectID, serv
 	}
 
 	return transpiler.MergeFragments(tmpDir, transpiler.Options{
-		CloudRun:      true,
-		ListenAddress: s.listenAddr,
+		CloudRun:       true,
+		ListenAddress:  s.listenAddr,
+		TrustedProxies: s.trustedProxies,
 	})
 }
 

@@ -22,7 +22,7 @@ func MergeFragments(dir string, opts Options) (string, error) {
 	var b strings.Builder
 
 	if opts.CloudRun {
-		b.WriteString(cloudRunGlobalBlock)
+		b.WriteString(cloudRunGlobalBlock(opts.TrustedProxies))
 	}
 
 	addr := opts.ListenAddress

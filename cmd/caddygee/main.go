@@ -29,12 +29,13 @@ func rootCmd() *cobra.Command {
 
 func transpileCmd() *cobra.Command {
 	var (
-		input    string
-		output   string
-		format   string
-		listen   string
-		fragment bool
-		cloudRun bool
+		input          string
+		output         string
+		format         string
+		listen         string
+		fragment       bool
+		cloudRun       bool
+		trustedProxies []string
 	)
 	cmd := &cobra.Command{
 		Use:   "transpile",
@@ -45,10 +46,11 @@ func transpileCmd() *cobra.Command {
 				return fmt.Errorf("parsing bundle: %w", err)
 			}
 			out, err := transpiler.Emit(bundle, transpiler.Options{
-				Format:        format,
-				ListenAddress: listen,
-				Fragment:      fragment,
-				CloudRun:      cloudRun,
+				Format:         format,
+				ListenAddress:  listen,
+				Fragment:       fragment,
+				CloudRun:       cloudRun,
+				TrustedProxies: trustedProxies,
 			})
 			if err != nil {
 				return fmt.Errorf("transpiling: %w", err)
@@ -66,24 +68,27 @@ func transpileCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&listen, "listen", "l", ":443", "Caddy listen address")
 	cmd.Flags().BoolVar(&fragment, "fragment", false, "Emit bare route content only (no server block), for use with the deploy endpoint")
 	cmd.Flags().BoolVar(&cloudRun, "cloud-run", false, "Prepend Cloud Run global options (admin, auto_https off, trusted_proxies, logging, /health)")
+	cmd.Flags().StringArrayVar(&trustedProxies, "trusted-proxies", nil, "CIDR ranges for trusted_proxies (default: GCP load-balancer ranges; only used with --cloud-run)")
 	_ = cmd.MarkFlagRequired("input")
 	return cmd
 }
 
 func mergeCmd() *cobra.Command {
 	var (
-		input    string
-		output   string
-		listen   string
-		cloudRun bool
+		input          string
+		output         string
+		listen         string
+		cloudRun       bool
+		trustedProxies []string
 	)
 	cmd := &cobra.Command{
 		Use:   "merge",
 		Short: "Merge Caddyfile fragments from a directory into a complete Caddyfile",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out, err := transpiler.MergeFragments(input, transpiler.Options{
-				ListenAddress: listen,
-				CloudRun:      cloudRun,
+				ListenAddress:  listen,
+				CloudRun:       cloudRun,
+				TrustedProxies: trustedProxies,
 			})
 			if err != nil {
 				return fmt.Errorf("merging fragments: %w", err)
@@ -99,6 +104,7 @@ func mergeCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output file path (default: stdout)")
 	cmd.Flags().StringVarP(&listen, "listen", "l", ":8080", "Caddy listen address")
 	cmd.Flags().BoolVar(&cloudRun, "cloud-run", false, "Prepend Cloud Run global options")
+	cmd.Flags().StringArrayVar(&trustedProxies, "trusted-proxies", nil, "CIDR ranges for trusted_proxies (default: GCP load-balancer ranges; only used with --cloud-run)")
 	_ = cmd.MarkFlagRequired("input")
 	return cmd
 }

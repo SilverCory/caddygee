@@ -24,6 +24,10 @@ type Options struct {
 	// CloudRun prepends the standard Cloud Run global options block and server-level
 	// directives (admin, auto_https off, trusted_proxies, structured logging, /health).
 	CloudRun bool
+	// TrustedProxies is the list of CIDR ranges passed to `trusted_proxies static`
+	// in the global options block. Only used when CloudRun is true. When empty,
+	// defaults to the Google Cloud load-balancer ranges (130.211.0.0/22 35.191.0.0/16).
+	TrustedProxies []string
 	// MatcherPrefix is prepended to all named matcher identifiers to avoid
 	// collisions when multiple bundles are merged into a single Caddyfile.
 	// When empty, no prefix is added.

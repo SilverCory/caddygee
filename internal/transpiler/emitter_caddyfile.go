@@ -7,11 +7,17 @@ import (
 	"strings"
 )
 
-const cloudRunGlobalBlock = `{
+var defaultTrustedProxies = []string{"130.211.0.0/22", "35.191.0.0/16"}
+
+func cloudRunGlobalBlock(trustedProxies []string) string {
+	if len(trustedProxies) == 0 {
+		trustedProxies = defaultTrustedProxies
+	}
+	return fmt.Sprintf(`{
 	admin localhost:2019
 	auto_https off
 	servers {
-		trusted_proxies static 130.211.0.0/22 35.191.0.0/16
+		trusted_proxies static %s
 	}
 	log {
 		output stdout
@@ -19,7 +25,8 @@ const cloudRunGlobalBlock = `{
 		level INFO
 	}
 }
-`
+`, strings.Join(trustedProxies, " "))
+}
 
 const cloudRunServerDirectives = `
 	log {
@@ -52,7 +59,7 @@ func EmitCaddyfile(cfg *CaddyConfig, opts Options) (string, error) {
 	}
 
 	if opts.CloudRun {
-		b.WriteString(cloudRunGlobalBlock)
+		b.WriteString(cloudRunGlobalBlock(opts.TrustedProxies))
 	}
 
 	// M4: Sort server keys for deterministic output.
