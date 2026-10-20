@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/caddyserver/caddy/v2"
@@ -114,12 +115,30 @@ func (a AssignMessage) applyToResponse(rec *responseRecorder, fs *FlowState) {
 	}
 }
 
-// resolveValue substitutes {flowvar.X} placeholders. Safe when fs is nil.
+// apigeeVarPattern matches Apigee-style {varname} placeholders (e.g. {extracted.id}).
+// It avoids matching Caddy/Go template syntax by requiring the first char to be a letter.
+var apigeeVarPattern = regexp.MustCompile(`\{([a-zA-Z][^}]*)\}`)
+
+// resolveValue substitutes flow variable placeholders. Supports both
+// {flowvar.X} (explicit prefix) and bare Apigee-style {varname} patterns.
+// Safe when fs is nil.
 func resolveValue(s string, fs *FlowState) string {
-	if fs == nil || !strings.Contains(s, "{flowvar.") {
+	if fs == nil {
 		return s
 	}
-	return resolveFlowVars(s, fs)
+	if strings.Contains(s, "{flowvar.") {
+		s = resolveFlowVars(s, fs)
+	}
+	if strings.Contains(s, "{") {
+		s = apigeeVarPattern.ReplaceAllStringFunc(s, func(match string) string {
+			key := apigeeVarPattern.FindStringSubmatch(match)[1]
+			if val := fs.GetString(key); val != "" {
+				return val
+			}
+			return match
+		})
+	}
+	return s
 }
 
 // responseRecorder buffers a response so the assign_message module can mutate it.

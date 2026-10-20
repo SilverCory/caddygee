@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ProxyEndpoint name="default">
+    <HTTPProxyConnection>
+        <BasePath>/test/kvm-assign-chain</BasePath>
+    </HTTPProxyConnection>
+    <PreFlow name="PreFlow">
+        <Request/>
+        <Response/>
+    </PreFlow>
+    <PostFlow name="PostFlow">
+        <Request/>
+        <Response/>
+    </PostFlow>
+    <Flows>
+        <Flow name="Test">
+            <Condition>(request.verb = "GET")</Condition>
+            <Request>
+                <Step><Name>LoadFeatureFlag</Name></Step>
+                <Step><Name>ForwardFlag</Name></Step>
+            </Request>
+            <Response/>
+        </Flow>
+    </Flows>
+</ProxyEndpoint>

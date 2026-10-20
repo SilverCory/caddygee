@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage name="InjectHeader">
+    <AssignTo type="request" createNew="false"/>
+    <Set>
+        <Headers>
+            <Header name="X-Conditional-Hit">yes</Header>
+        </Headers>
+    </Set>
+</AssignMessage>

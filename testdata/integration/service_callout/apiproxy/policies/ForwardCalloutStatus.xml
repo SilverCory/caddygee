@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage name="ForwardCalloutStatus">
+    <AssignTo type="request" createNew="false"/>
+    <Set>
+        <Headers>
+            <Header name="X-Callout-Status">{callout.statusCode}</Header>
+        </Headers>
+    </Set>
+</AssignMessage>

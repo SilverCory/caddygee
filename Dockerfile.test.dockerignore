@@ -1,0 +1,17 @@
+# Minimal ignore list for the integration test image.
+# testdata/ and *_test.go are intentionally included.
+
+# Build artefacts
+caddy
+caddygee-cli
+caddygee-server
+
+# Local config / secrets
+.env
+*.local
+
+# VCS
+.git/
+
+# Terraform (not needed for tests)
+terraform/

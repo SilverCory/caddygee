@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<KeyValueMapOperations name="LoadFeatureFlag" mapIdentifier="feature-flags">
+    <InitialEntries>
+        <Entry>
+            <Key><Parameter>flag.name</Parameter></Key>
+            <Value>new-checkout</Value>
+        </Entry>
+    </InitialEntries>
+    <Get assignTo="feature.flag" index="1">
+        <Key><Parameter>flag.name</Parameter></Key>
+    </Get>
+</KeyValueMapOperations>

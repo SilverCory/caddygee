@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<KeyValueMapOperations name="LoadConfig" mapIdentifier="test-config">
+    <InitialEntries>
+        <Entry>
+            <Key><Parameter>backend.name</Parameter></Key>
+            <Value>test-backend</Value>
+        </Entry>
+    </InitialEntries>
+    <Get assignTo="backend.name" index="1">
+        <Key><Parameter>backend.name</Parameter></Key>
+    </Get>
+</KeyValueMapOperations>

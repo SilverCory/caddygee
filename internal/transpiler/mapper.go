@@ -28,6 +28,9 @@ type Options struct {
 	// in the global options block. Only used when CloudRun is true. When empty,
 	// defaults to the Google Cloud load-balancer ranges (130.211.0.0/22 35.191.0.0/16).
 	TrustedProxies []string
+	// AdminAddress is the Caddy admin API address (e.g. "localhost:2019").
+	// Only used when CloudRun is true. When empty, defaults to "localhost:2019".
+	AdminAddress string
 	// MatcherPrefix is prepended to all named matcher identifiers to avoid
 	// collisions when multiple bundles are merged into a single Caddyfile.
 	// When empty, no prefix is added.
@@ -332,14 +335,14 @@ func mapFlow(flow apigee.Flow, bundle *apigee.Bundle, targets []conditionalTarge
 		route.Handlers = append(route.Handlers, mapStepToHandler(step, bundle))
 	}
 
-	// Terminal: google auth (if needed) + reverse proxy, one per conditional target.
-	appendTargetHandlers(route, targets)
-
-	// Response steps run after the upstream responds.
-	// assign_message with phase=response buffers the response internally.
+	// Response-phase steps wrap the ResponseWriter before the upstream call,
+	// so they must be placed BEFORE reverse_proxy in the handler chain.
 	for _, step := range flow.Response.Steps {
 		route.Handlers = append(route.Handlers, mapStepToHandlerPhase(step, bundle, "response"))
 	}
+
+	// Terminal: google auth (if needed) + reverse proxy, one per conditional target.
+	appendTargetHandlers(route, targets)
 
 	return route, nil
 }

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<VerifyJWT name="CheckJWT">
+    <Algorithm>RS256</Algorithm>
+    <PublicKey>
+        <Value>-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2/sXuR2xkyzjNSk4Wh5O
+nnqTsdIew+sgk+zsuTpchNBBjRLrp2sr0wb0DtEUC3jirwv1G67ntCxBkOLQMNcv
+QWDK72WQ11vA0xx3arTBJ6E9nNet87wr//4Zlq0G9r3WJG/qf+mFQALaRVohYTZ6
+fRP2EpPpuqsC99rxQoXmE5AGHPJRs4JYc7B1GnrS+huzPQ/DrVHESgmG/67vEZYj
+UnbRY4bndeOvhhCY6bZaLN706J1m6q+WYLsoC4Q8utT8hWcGoX25H3q5voARonZx
+Rl4XzDVISTmGCf7BEmBUp1oc4yjPxVG5i9n5VA6lgb4aGN4cJupA+xgm5sHxG14S
+8QIDAQAB
+-----END PUBLIC KEY-----</Value>
+    </PublicKey>
+    <Issuer>test-issuer</Issuer>
+    <Audience>test-audience</Audience>
+</VerifyJWT>

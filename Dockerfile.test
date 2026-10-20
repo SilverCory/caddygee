@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+# Runs the full integration test suite (go test -tags integration) inside a
+# self-contained container. All required binaries are built from source within
+# the same image so there are no host toolchain dependencies.
+#
+# Usage:
+#   docker build -f Dockerfile.test .
+#   make test-integration
+
+FROM golang:1.26-alpine
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /build
+
+# Cache module downloads.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy full source (needed for integration tests + testdata).
+COPY . .
+
+# Pre-build the two binaries the integration harness needs so the first test
+# run doesn't also compile them (avoids the per-test build timeout).
+RUN go build -o /usr/local/bin/caddy           ./cmd/caddy/ && \
+    go build -o /usr/local/bin/caddygee-server ./cmd/caddygee-server/
+
+# Run the integration tests. The harness builds the binaries itself via
+# buildBinaries(), but CADDY_BIN / CADDYGEE_SERVER_BIN aren't used here —
+# the harness finds them via go env GOMOD and builds fresh. The pre-build
+# above is cached for subsequent runs.
+CMD ["go", "test", "-tags", "integration", "-timeout", "300s", "-v", "-count=1", "./integration/"]

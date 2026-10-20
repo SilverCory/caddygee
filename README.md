@@ -136,16 +136,23 @@ The caller's service account must have `roles/run.invoker` on the caddygee Cloud
 
 ### Environment variables (caddygee-server)
 
-| Variable | Description |
-|----------|-------------|
-| `CONFIG_BUCKET` | GCS bucket name for fragment storage (required) |
-| `PORT` | HTTP port for the deploy server (default: `8080`) |
-| `ENVIRONMENT_NAME` | Apigee environment name (`preview`, `preprod`, `prod`) |
-| `DEBUG_TOKEN` | If set, requests with `X-Apigee-Debug: <token>` or `?_debug=<token>` get verbose handler logging |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CONFIG_BUCKET` | — | GCS bucket name for fragment storage (required for `/deploy`) |
+| `CADDYGEE_AUDIENCE` | — | Expected OIDC token audience — must match the public service URL (required for `/deploy`) |
+| `DEPLOY_PORT` | `9090` | Port the deploy server listens on (proxied through Caddy; not exposed directly) |
+| `LISTEN_ADDRESS` | `:8080` | Caddy bind address, passed to the fragment merger |
+| `ENVIRONMENT_NAME` | — | Apigee environment name (`preview`, `preprod`, `prod`); controls which `when` branches execute |
+| `TRUSTED_PROXIES` | GCP LB ranges | Space-separated CIDR ranges for `trusted_proxies` in the global options block |
+| `CADDY_ADMIN` | `localhost:2019` | Caddy admin API address for hot-reload |
+| `CADDYFILE_PATH` | `/etc/caddy/Caddyfile` | Path caddygee-server writes the merged Caddyfile to |
+| `DEBUG_TOKEN` | — | If set, requests with `X-Apigee-Debug: <token>` or `?_debug=<token>` get verbose per-handler logs |
+
+> **Note:** Cloud Run automatically injects `PORT` — do not set it manually. Caddy listens on `LISTEN_ADDRESS` (`:8080`), not `PORT`.
 
 ## Supported Apigee Policies
 
-See [`docs/policies.md`](docs/policies.md) for full reference.
+See [`docs/policies.md`](docs/policies.md) for full reference. See also [`docs/deploying-a-proxy.md`](docs/deploying-a-proxy.md), [`docs/infrastructure.md`](docs/infrastructure.md), and [`docs/troubleshooting.md`](docs/troubleshooting.md).
 
 | Directive | Apigee equivalent | Status |
 |-----------|------------------|--------|

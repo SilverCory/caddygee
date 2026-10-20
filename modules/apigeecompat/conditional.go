@@ -629,6 +629,58 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 				}
 				obj += `}`
 				c.Inner = json.RawMessage(obj)
+			case "assign_message":
+				setHeaders := make(map[string]string)
+				addHeaders := make(map[string]string)
+				var removeHeaders []string
+				var phase, setBody string
+				for h.NextBlock(1) {
+					switch h.Val() {
+					case "phase":
+						if h.NextArg() {
+							phase = h.Val()
+						}
+					case "set_header":
+						args := h.RemainingArgs()
+						if len(args) >= 2 {
+							setHeaders[args[0]] = args[1]
+						}
+					case "add_header":
+						args := h.RemainingArgs()
+						if len(args) >= 2 {
+							addHeaders[args[0]] = args[1]
+						}
+					case "remove_header":
+						if h.NextArg() {
+							removeHeaders = append(removeHeaders, h.Val())
+						}
+					case "set_body":
+						if h.NextArg() {
+							setBody = h.Val()
+						}
+					}
+				}
+				obj := `{"handler":"assign_message"`
+				if phase != "" {
+					obj += fmt.Sprintf(`,"phase":%s`, jsonString(phase))
+				}
+				if len(setHeaders) > 0 {
+					b, _ := json.Marshal(setHeaders)
+					obj += fmt.Sprintf(`,"set_headers":%s`, string(b))
+				}
+				if len(addHeaders) > 0 {
+					b, _ := json.Marshal(addHeaders)
+					obj += fmt.Sprintf(`,"add_headers":%s`, string(b))
+				}
+				if len(removeHeaders) > 0 {
+					b, _ := json.Marshal(removeHeaders)
+					obj += fmt.Sprintf(`,"remove_headers":%s`, string(b))
+				}
+				if setBody != "" {
+					obj += fmt.Sprintf(`,"set_body":%s`, jsonString(setBody))
+				}
+				obj += `}`
+				c.Inner = json.RawMessage(obj)
 			default:
 				// For handlers with a sub-block, drain the block without capturing
 				// it — the inner handler key alone is sufficient for zero-config

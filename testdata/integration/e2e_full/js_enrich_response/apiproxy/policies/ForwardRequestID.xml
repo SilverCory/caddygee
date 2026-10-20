@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage name="ForwardRequestID">
+    <AssignTo type="request" createNew="false"/>
+    <Set>
+        <Headers>
+            <Header name="X-Request-ID">{js.request.id}</Header>
+        </Headers>
+    </Set>
+</AssignMessage>

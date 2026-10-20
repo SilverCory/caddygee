@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<CORS name="AddCORS">
+    <AllowOrigins>*</AllowOrigins>
+    <AllowMethods>GET, POST, OPTIONS</AllowMethods>
+    <AllowHeaders>Content-Type, Authorization</AllowHeaders>
+    <MaxAge>3600</MaxAge>
+    <GeneratePreflightResponse>true</GeneratePreflightResponse>
+</CORS>

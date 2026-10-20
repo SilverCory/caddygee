@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage name="SetGatewayHeader">
+    <AssignTo type="request" createNew="false"/>
+    <Set>
+        <Headers>
+            <Header name="X-Gateway">caddygee</Header>
+        </Headers>
+    </Set>
+</AssignMessage>

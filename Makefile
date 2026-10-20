@@ -1,4 +1,4 @@
-.PHONY: build-cli build-caddy test test-race test-v lint clean docker-build docker-run cloud-build
+.PHONY: build-cli build-caddy test test-race test-v test-integration lint clean docker-build docker-run cloud-build
 
 # ── Local development ─────────────────────────────────────────────────────────
 
@@ -20,6 +20,11 @@ test-race:
 
 test-v:
 	go test -v ./...
+
+# Run the full integration test suite inside Docker (mirrors CI).
+test-integration:
+	docker build -f Dockerfile.test -t caddygee-test:dev --progress plain .
+	docker run --rm caddygee-test:dev
 
 # ── Lint ──────────────────────────────────────────────────────────────────────
 

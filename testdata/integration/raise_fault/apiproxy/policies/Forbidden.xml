@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RaiseFault name="Forbidden">
+    <FaultResponse>
+        <Set>
+            <StatusCode>403</StatusCode>
+            <ReasonPhrase>Forbidden</ReasonPhrase>
+            <Payload>{"error":"forbidden"}</Payload>
+        </Set>
+    </FaultResponse>
+</RaiseFault>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ExtractVariables name="ExtractID">
+    <VariablePrefix>extracted</VariablePrefix>
+    <Header name="X-Item-ID">
+        <Pattern ignoreCase="true">item-{id}</Pattern>
+    </Header>
+</ExtractVariables>

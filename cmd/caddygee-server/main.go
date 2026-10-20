@@ -46,6 +46,7 @@ func main() {
 	adminAddr := envOr("CADDY_ADMIN", "localhost:2019")
 	caddyfilePath := envOr("CADDYFILE_PATH", "/etc/caddy/Caddyfile")
 	listenAddr := envOr("LISTEN_ADDRESS", ":8080")
+	caddyBinPath := envOr("CADDY_BIN", "caddy")
 
 	var trustedProxies []string
 	if raw := os.Getenv("TRUSTED_PROXIES"); raw != "" {
@@ -62,6 +63,14 @@ func main() {
 		listenAddr:     listenAddr,
 		trustedProxies: trustedProxies,
 		httpClient:     &http.Client{Timeout: 30 * time.Second},
+		caddyBin:       caddyBinPath,
+	}
+
+	// CADDYGEE_BYPASS_AUTH=1 skips OIDC verification; the project ID is taken
+	// from the X-Project-ID header instead. Only for integration testing.
+	if os.Getenv("CADDYGEE_BYPASS_AUTH") == "1" {
+		log.Printf("WARNING: auth bypass enabled (CADDYGEE_BYPASS_AUTH=1) — testing only")
+		srv.verifyToken = bypassAuth
 	}
 
 	ctx := context.Background()
@@ -100,16 +109,38 @@ func main() {
 // 1–63 characters, starting with a letter or digit (MEDIUM-1).
 var serviceNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
+// verifyTokenFunc validates an OIDC Bearer token and returns the caller's GCP project ID.
+// It mirrors the signature of idtoken.Validate for testability.
+type verifyTokenFunc func(ctx context.Context, token, audience string) (projectID string, err error)
+
+// bypassAuth skips OIDC validation and uses the raw token value as the project ID.
+// Only used when CADDYGEE_BYPASS_AUTH=1 (integration testing).
+func bypassAuth(_ context.Context, token, _ string) (string, error) {
+	if token == "" {
+		return "", fmt.Errorf("bypass auth: token (project ID) is empty")
+	}
+	return token, nil
+}
+
 type deployServer struct {
 	bucket         string
-	audience       string       // SEC-1: expected OIDC audience (Cloud Run service URL)
+	audience       string          // SEC-1: expected OIDC audience (Cloud Run service URL)
 	adminAddr      string
 	caddyfilePath  string
 	listenAddr     string
 	trustedProxies []string
 	gcs            *storage.Client
-	httpClient     *http.Client // HIGH-1: shared client with timeout for admin API calls
-	mu             sync.Mutex   // serialises concurrent deploys
+	httpClient     *http.Client    // HIGH-1: shared client with timeout for admin API calls
+	verifyToken    verifyTokenFunc // nil → uses idtoken.Validate
+	caddyBin       string          // path to caddy binary; defaults to "caddy"
+	mu             sync.Mutex      // serialises concurrent deploys
+}
+
+func (s *deployServer) caddy() string {
+	if s.caddyBin != "" {
+		return s.caddyBin
+	}
+	return "caddy"
 }
 
 // handleDeploy handles POST /deploy.
@@ -171,7 +202,7 @@ func (s *deployServer) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// --- Gate 1: validate fragment in isolation ---
-	if err := validateFragment(string(fragment), s.listenAddr); err != nil {
+	if err := s.validateFragment(string(fragment), s.listenAddr); err != nil {
 		log.Printf("gate1 validation failed for %s/%s: %v", projectID, serviceName, err)
 		http.Error(w, fmt.Sprintf("fragment validation failed: %v", err), http.StatusBadRequest)
 		return
@@ -184,7 +215,7 @@ func (s *deployServer) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("merge validation failed: %v", err), http.StatusUnprocessableEntity)
 		return
 	}
-	if err := validateCaddyfile(merged); err != nil {
+	if err := s.validateCaddyfile(merged); err != nil {
 		log.Printf("gate2 validation failed for %s/%s: %v", projectID, serviceName, err)
 		http.Error(w, fmt.Sprintf("merged config validation failed: %v", err), http.StatusUnprocessableEntity)
 		return
@@ -223,6 +254,10 @@ func (s *deployServer) verifyIDToken(r *http.Request) (string, error) {
 	}
 	token := strings.TrimPrefix(auth, "Bearer ")
 
+	if s.verifyToken != nil {
+		return s.verifyToken(r.Context(), token, s.audience)
+	}
+
 	// idtoken.Validate fetches Google's public keys and verifies signature,
 	// expiry, issuer (accounts.google.com), AND audience — no SSRF possible.
 	payload, err := idtoken.Validate(r.Context(), token, s.audience)
@@ -260,14 +295,14 @@ func extractProjectFromEmail(email string) string {
 
 // validateFragment wraps the fragment in a minimal server block and runs
 // `caddy adapt --adapter caddyfile --validate` to check syntax and provisioning.
-func validateFragment(fragment, listenAddr string) error {
+func (s *deployServer) validateFragment(fragment, listenAddr string) error {
 	wrapped := fmt.Sprintf("%s {\n%s\n}\n", listenAddr, fragment)
-	return validateCaddyfile(wrapped)
+	return s.validateCaddyfile(wrapped)
 }
 
 // validateCaddyfile runs `caddy adapt --adapter caddyfile --validate` on content.
-func validateCaddyfile(content string) error {
-	cmd := exec.Command("caddy", "adapt", "--adapter", "caddyfile", "--validate")
+func (s *deployServer) validateCaddyfile(content string) error {
+	cmd := exec.Command(s.caddy(), "adapt", "--config", "-", "--adapter", "caddyfile", "--validate")
 	cmd.Stdin = strings.NewReader(content)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -308,6 +343,7 @@ func (s *deployServer) buildMergedCaddyfile(ctx context.Context, projectID, serv
 		CloudRun:       true,
 		ListenAddress:  s.listenAddr,
 		TrustedProxies: s.trustedProxies,
+		AdminAddress:   s.adminAddr,
 	})
 }
 
@@ -337,6 +373,7 @@ func (s *deployServer) buildAndWriteCaddyfile(ctx context.Context) error {
 	merged, err := transpiler.MergeFragments(tmpDir, transpiler.Options{
 		CloudRun:      true,
 		ListenAddress: s.listenAddr,
+		AdminAddress:  s.adminAddr,
 	})
 	if err != nil {
 		return err
@@ -350,9 +387,9 @@ func (s *deployServer) buildAndWriteCaddyfile(ctx context.Context) error {
 
 func (s *deployServer) writeFallbackCaddyfile() {
 	content := fmt.Sprintf(`{
-	admin localhost:2019
+	admin %s
 	auto_https off
-}
+}`, s.adminAddr) + fmt.Sprintf(`
 
 %s {
 	handle /health {
@@ -371,7 +408,7 @@ func (s *deployServer) writeFallbackCaddyfile() {
 // Caddy auto-rolls back if the config is rejected.
 func (s *deployServer) caddyLoad(caddyfile string) error {
 	// Convert Caddyfile to JSON first via caddy adapt.
-	cmd := exec.Command("caddy", "adapt", "--adapter", "caddyfile")
+	cmd := exec.Command(s.caddy(), "adapt", "--config", "-", "--adapter", "caddyfile")
 	cmd.Stdin = strings.NewReader(caddyfile)
 	jsonBytes, err := cmd.Output()
 	if err != nil {

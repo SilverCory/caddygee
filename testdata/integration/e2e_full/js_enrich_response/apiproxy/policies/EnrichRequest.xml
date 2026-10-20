@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Javascript name="EnrichRequest">
+    <Source>context.setVariable("js.request.id", "req-12345");</Source>
+</Javascript>

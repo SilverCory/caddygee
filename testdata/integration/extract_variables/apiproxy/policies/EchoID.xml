@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage name="EchoID">
+    <AssignTo type="request" createNew="false"/>
+    <Set>
+        <Headers>
+            <Header name="X-Extracted-ID">{extracted.id}</Header>
+        </Headers>
+    </Set>
+</AssignMessage>

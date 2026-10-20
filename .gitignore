@@ -5,8 +5,10 @@
 /caddygee-server
 dist/
 
-# Go build cache
+# Go build cache (compiled test binaries end in .test, not Dockerfile.test etc.)
 *.test
+!Dockerfile.test
+!Dockerfile.test.dockerignore
 *.out
 
 # Environment / credentials
@@ -23,6 +25,9 @@ Caddyfile
 .vscode/
 *.swp
 *.swo
+
+# Terraform
+terraform/
 
 # OS
 .DS_Store

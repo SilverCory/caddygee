@@ -24,6 +24,24 @@ jobs:
       - name: test
         run: go test -race -count=1 ./...
 
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run integration tests
+        run: |
+          docker build \
+            --file Dockerfile.test \
+            --tag caddygee-test:ci \
+            --progress plain \
+            .
+          docker run --rm caddygee-test:ci
+
   build:
     name: Build binaries
     runs-on: ubuntu-latest

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage name="ForwardClientID">
+    <AssignTo type="request" createNew="false"/>
+    <Set>
+        <Headers>
+            <Header name="X-Forwarded-Client-ID">{client.id}</Header>
+        </Headers>
+    </Set>
+</AssignMessage>

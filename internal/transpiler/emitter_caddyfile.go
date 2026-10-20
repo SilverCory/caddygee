@@ -9,12 +9,15 @@ import (
 
 var defaultTrustedProxies = []string{"130.211.0.0/22", "35.191.0.0/16"}
 
-func cloudRunGlobalBlock(trustedProxies []string) string {
+func cloudRunGlobalBlock(adminAddr string, trustedProxies []string) string {
+	if adminAddr == "" {
+		adminAddr = "localhost:2019"
+	}
 	if len(trustedProxies) == 0 {
 		trustedProxies = defaultTrustedProxies
 	}
-	return fmt.Sprintf(`{
-	admin localhost:2019
+	return fmt.Sprintf("{"+`
+	admin %s
 	auto_https off
 	servers {
 		trusted_proxies static %s
@@ -25,7 +28,7 @@ func cloudRunGlobalBlock(trustedProxies []string) string {
 		level INFO
 	}
 }
-`, strings.Join(trustedProxies, " "))
+`, adminAddr, strings.Join(trustedProxies, " "))
 }
 
 const cloudRunServerDirectives = `
@@ -35,6 +38,9 @@ const cloudRunServerDirectives = `
 	}
 	handle /health {
 		respond 200
+	}
+	handle /deploy {
+		reverse_proxy localhost:9090
 	}
 `
 
@@ -59,7 +65,7 @@ func EmitCaddyfile(cfg *CaddyConfig, opts Options) (string, error) {
 	}
 
 	if opts.CloudRun {
-		b.WriteString(cloudRunGlobalBlock(opts.TrustedProxies))
+		b.WriteString(cloudRunGlobalBlock(opts.AdminAddress, opts.TrustedProxies))
 	}
 
 	// M4: Sort server keys for deterministic output.
@@ -205,7 +211,8 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 					fmt.Fprintf(b, "%s\tjwks_uri %s\n", indent, cfg.JWKSURI)
 				}
 				if cfg.PublicKey != "" {
-					fmt.Fprintf(b, "%s\tpublic_key %s\n", indent, jsonStringLiteral(cfg.PublicKey))
+					// Backtick quoting preserves real newlines in the PEM block.
+					fmt.Fprintf(b, "%s\tpublic_key `%s`\n", indent, cfg.PublicKey)
 				}
 				if cfg.Issuer != "" {
 					fmt.Fprintf(b, "%s\tissuer %s\n", indent, cfg.Issuer)
@@ -243,7 +250,7 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 			}
 			if err := json.Unmarshal(v.Config, &cfg); err == nil && cfg.Source != "" {
 				fmt.Fprintf(b, "%s%s %s {\n", indent, shortName, v.PolicyName)
-				fmt.Fprintf(b, "%s\tsource %s\n", indent, jsonStringLiteral(cfg.Source))
+				fmt.Fprintf(b, "%s\tsource `%s`\n", indent, cfg.Source)
 				if cfg.TimeoutMs > 0 {
 					fmt.Fprintf(b, "%s\ttimeout_ms %d\n", indent, cfg.TimeoutMs)
 				}
