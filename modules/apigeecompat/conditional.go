@@ -629,6 +629,31 @@ func parseConditionalCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHand
 				}
 				obj += `}`
 				c.Inner = json.RawMessage(obj)
+			case "verify_google_idtoken":
+				var policyName, audience string
+				var allowedEmails []string
+				for h.NextBlock(1) {
+					switch h.Val() {
+					case "policy_name":
+						if h.NextArg() {
+							policyName = h.Val()
+						}
+					case "audience":
+						if h.NextArg() {
+							audience = h.Val()
+						}
+					case "allowed_emails":
+						allowedEmails = append(allowedEmails, h.RemainingArgs()...)
+					}
+				}
+				obj := fmt.Sprintf(`{"handler":"verify_google_idtoken","policy_name":%s,"audience":%s`,
+					jsonString(policyName), jsonString(audience))
+				if len(allowedEmails) > 0 {
+					b, _ := json.Marshal(allowedEmails)
+					obj += fmt.Sprintf(`,"allowed_emails":%s`, string(b))
+				}
+				obj += `}`
+				c.Inner = json.RawMessage(obj)
 			case "assign_message":
 				setHeaders := make(map[string]string)
 				addHeaders := make(map[string]string)

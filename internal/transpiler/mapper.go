@@ -573,9 +573,19 @@ type serviceCalloutConfig struct {
 	RequestBodyVar string `json:"request_body_var,omitempty"`
 	ResponseVar    string `json:"response_var,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+	// Audience, if set, causes the callout to fetch a Google OIDC ID Token
+	// for this audience and attach it as Authorization: Bearer.
+	Audience string `json:"audience,omitempty"`
 	// WarnRequestHeaders is set when the Apigee policy adds outbound request
 	// headers — a feature not supported by the service_callout module.
 	WarnRequestHeaders bool `json:"warn_request_headers,omitempty"`
+}
+
+// verifyGoogleIDTokenConfig is the JSON shape consumed by verify_google_idtoken.
+type verifyGoogleIDTokenConfig struct {
+	PolicyName    string   `json:"policy_name"`
+	Audience      string   `json:"audience"`
+	AllowedEmails []string `json:"allowed_emails,omitempty"`
 }
 
 func buildServiceCalloutConfig(pol apigee.Policy) serviceCalloutConfig {

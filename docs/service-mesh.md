@@ -11,6 +11,8 @@ The goal: two caddygee deployments (or any Cloud Run services) can mutually auth
 
 **Why not mTLS?** Cloud Run doesn't support mTLS at the infrastructure level; OIDC is the idiomatic Cloud Run service-to-service auth mechanism.
 
+> **Implementation note:** `assign_message` as an inner `when` handler is already implemented (`conditional.go`). The `/deploy` route is now wired through Caddy's global block — mesh fragments must not use catch-all routes that intercept `/deploy`. The integration test harness (`integration/harness_test.go`) supports `CADDYGEE_BYPASS_AUTH=1` for testing without live GCP credentials.
+
 ---
 
 ## New Modules
@@ -187,11 +189,11 @@ route /api/* {
 2. `modules/apigeecompat/verify_google_idtoken_test.go` — unit tests with injected validate func
 3. `modules/apigeecompat/service_callout.go` — add `Audience` + token source
 4. `modules/apigeecompat/service_callout_test.go` — add audience test with injected token source
-5. `modules/apigeecompat/conditional.go` — add `verify_google_idtoken` to inner handler switch
-6. `internal/transpiler/mapper.go` — add `verifyGoogleIDTokenConfig`, extend `serviceCalloutConfig`
-7. `internal/transpiler/emitter_caddyfile.go` — emit both new types
+5. `modules/apigeecompat/conditional.go` — add `verify_google_idtoken` to inner handler switch (`assign_message` already done)
+6. `internal/transpiler/mapper.go` — add `verifyGoogleIDTokenConfig`, extend `serviceCalloutConfig`; `Options.AdminAddress` already exists — do not re-add
+7. `internal/transpiler/emitter_caddyfile.go` — emit both types; pass `opts.AdminAddress` to `cloudRunGlobalBlock(adminAddr, trustedProxies)` (signature changed in c690a5a)
 
-Steps 1–4 can be tested independently of 5–7.
+Steps 1–4 can be tested independently of 5–7. New integration tests go in `integration/mesh_test.go` using the existing harness.
 
 ---
 
@@ -212,15 +214,17 @@ Steps 1–4 can be tested independently of 5–7.
 # Build and vet
 go build ./... && go vet ./...
 
-# Run all tests (no live GCP needed)
-go test -race ./...
+# Unit tests (no live GCP)
+go test -race ./modules/apigeecompat/... ./internal/transpiler/...
 
-# Integration tests (requires Cloud Run SA with ADC)
+# Full integration suite via Docker (no live GCP)
+make test-integration
+
+# Mesh integration tests once written
+go test -tags integration -run TestMesh ./integration/
+
+# Live token test (requires Cloud Run SA with ADC)
 go test -tags integration -run TestVerifyGoogleIDToken_LiveToken ./modules/apigeecompat/
-
-# Docker smoke test
-docker build -t caddygee-test .
-docker run --rm -e PORT=8080 -e DEPLOY_PORT=9090 -p 18080:8080 caddygee-test &
-sleep 10 && curl -s -o /dev/null -w "%{http_code}" http://localhost:18080/health
-# expect: 200
 ```
+
+The integration harness (`integration/harness_test.go`) launches real `caddy` and `caddygee-server` subprocesses with `CADDYGEE_BYPASS_AUTH=1` and in-process fakeGCS — no live GCP required for functional mesh routing tests.

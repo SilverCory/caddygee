@@ -371,6 +371,11 @@ func startGateway(t *testing.T, envName string) *gatewayHandle {
 		"CONFIG_BUCKET="+bucket,
 		"CADDYGEE_AUDIENCE="+audience,
 		"CADDYGEE_BYPASS_AUTH=1",
+		// Bypass Google OIDC validation for verify_google_idtoken and
+		// skip real ADC for service_callout audience token sources.
+		// Never set in production.
+		"CADDYGEE_BYPASS_IDTOKEN=1",
+		"CADDYGEE_STATIC_OUTBOUND_TOKEN=test-mesh-token",
 		"DEPLOY_PORT="+deployPort,
 		"CADDY_ADMIN=localhost:"+adminPort,
 		"CADDY_BIN="+caddyBin,
@@ -520,6 +525,35 @@ func (h *gatewayHandle) DeployWithSubs(bundlePath, serviceName, upstreamURL stri
 	req, err := http.NewRequest(http.MethodPost,
 		"http://localhost:"+h.deployPort+"/deploy",
 		bytes.NewReader(frag),
+	)
+	if err != nil {
+		h.t.Fatalf("building deploy request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+h.projectID)
+	req.Header.Set("X-Service-Name", serviceName)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.t.Fatalf("deploy request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		h.t.Fatalf("deploy returned %d: %s", resp.StatusCode, body)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+}
+
+// DeployFragment posts a raw Caddyfile fragment string directly to caddygee-server
+// without going through the transpiler. Used for caddygee-native directives
+// (e.g. verify_google_idtoken) that don't originate from Apigee proxy bundles.
+func (h *gatewayHandle) DeployFragment(serviceName, fragment string) {
+	h.t.Helper()
+
+	req, err := http.NewRequest(http.MethodPost,
+		"http://localhost:"+h.deployPort+"/deploy",
+		strings.NewReader(fragment),
 	)
 	if err != nil {
 		h.t.Fatalf("building deploy request: %v", err)

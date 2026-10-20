@@ -171,6 +171,37 @@ func TestServiceCallout_InvalidScheme(t *testing.T) {
 	}
 }
 
+func TestServiceCallout_AudienceInjectsToken(t *testing.T) {
+	var receivedAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		fmt.Fprint(w, "ok")
+	}))
+	defer upstream.Close()
+
+	sc := &apigeecompat.ServiceCallout{
+		TargetURL:   upstream.URL,
+		ResponseVar: "result",
+	}
+	if err := sc.Provision(apigeecompat.ZeroContext()); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	// Inject a static token source instead of calling idtoken.NewTokenSource.
+	sc.SetTokenSource(staticTokenSource("test-oidc-token"))
+
+	mgr := apigeecompat.FlowStateManager{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	calloutHandler := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+		return sc.ServeHTTP(w, r, terminal)
+	})
+	if err := mgr.ServeHTTP(httptest.NewRecorder(), req, calloutHandler); err != nil {
+		t.Fatalf("ServeHTTP: %v", err)
+	}
+	if receivedAuth != "Bearer test-oidc-token" {
+		t.Errorf("Authorization: got %q", receivedAuth)
+	}
+}
+
 func TestServiceCallout_ClientReuse(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "ok")

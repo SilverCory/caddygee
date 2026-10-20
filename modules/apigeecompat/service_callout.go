@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"go.uber.org/zap"
+	"golang.org/x/oauth2"
+	"google.golang.org/api/idtoken"
 )
 
 func init() {
@@ -35,10 +38,14 @@ type ServiceCallout struct {
 	ResponseVar string `json:"response_var,omitempty"`
 	// TimeoutSeconds is the HTTP client timeout (default: 10).
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	// Audience, if set, fetches a Google OIDC ID Token for this audience
+	// and attaches it as Authorization: Bearer on the outbound request.
+	Audience string `json:"audience,omitempty"`
 
 	// client is the shared HTTP client constructed during Provision.
-	client *http.Client
-	logger *zap.Logger
+	client      *http.Client
+	tokenSource oauth2.TokenSource
+	logger      *zap.Logger
 }
 
 // CaddyModule returns the Caddy module metadata.
@@ -70,6 +77,24 @@ func (s *ServiceCallout) Provision(ctx caddy.Context) error {
 	// C1: Build the shared HTTP client once at provision time.
 	s.client = &http.Client{
 		Timeout: time.Duration(s.TimeoutSeconds) * time.Second,
+	}
+	if s.Audience != "" {
+		// CADDYGEE_BYPASS_IDTOKEN=1: use a static token source for integration
+		// testing without real ADC. The token value is taken from
+		// CADDYGEE_STATIC_OUTBOUND_TOKEN (or "bypass-token" as fallback).
+		if os.Getenv("CADDYGEE_BYPASS_IDTOKEN") == "1" {
+			tok := os.Getenv("CADDYGEE_STATIC_OUTBOUND_TOKEN")
+			if tok == "" {
+				tok = "bypass-token"
+			}
+			s.tokenSource = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: tok})
+		} else {
+			ts, err := idtoken.NewTokenSource(context.Background(), s.Audience)
+			if err != nil {
+				return fmt.Errorf("service_callout: creating token source for audience %q: %w", s.Audience, err)
+			}
+			s.tokenSource = ts
+		}
 	}
 	return nil
 }
@@ -108,6 +133,14 @@ func (s *ServiceCallout) ServeHTTP(w http.ResponseWriter, r *http.Request, next 
 	req, err := http.NewRequestWithContext(ctx, s.Method, targetURL, bodyReader)
 	if err != nil {
 		return fmt.Errorf("service_callout: building request: %w", err)
+	}
+
+	if s.tokenSource != nil {
+		tok, err := s.tokenSource.Token()
+		if err != nil {
+			return fmt.Errorf("service_callout: fetching OIDC token: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
 	}
 
 	// C1: Use the shared client provisioned once in Provision.
@@ -190,6 +223,11 @@ func parseServiceCalloutCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareH
 					return nil, h.ArgErr()
 				}
 				fmt.Sscanf(h.Val(), "%d", &s.TimeoutSeconds)
+			case "audience":
+				if !h.NextArg() {
+					return nil, h.ArgErr()
+				}
+				s.Audience = h.Val()
 			}
 		}
 	}

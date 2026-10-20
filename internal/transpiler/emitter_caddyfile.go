@@ -416,16 +416,9 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 				return
 			}
 		}
-		// service_callout — emit target_url, method, request_body_var, response_var, timeout_seconds subdirectives.
+		// service_callout — emit target_url, method, request_body_var, response_var, timeout_seconds, audience subdirectives.
 		if shortName == "service_callout" && len(v.Config) > 0 {
-			var cfg struct {
-				TargetURL          string `json:"target_url"`
-				Method             string `json:"method,omitempty"`
-				RequestBodyVar     string `json:"request_body_var,omitempty"`
-				ResponseVar        string `json:"response_var,omitempty"`
-				TimeoutSeconds     int    `json:"timeout_seconds,omitempty"`
-				WarnRequestHeaders bool   `json:"warn_request_headers,omitempty"`
-			}
+			var cfg serviceCalloutConfig
 			if err := json.Unmarshal(v.Config, &cfg); err == nil && cfg.TargetURL != "" {
 				if cfg.WarnRequestHeaders {
 					fmt.Fprintf(b, "%s# WARNING: %s adds outbound request headers — not supported by service_callout module\n", indent, v.PolicyName)
@@ -443,6 +436,23 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 				}
 				if cfg.TimeoutSeconds > 0 {
 					fmt.Fprintf(b, "%s\ttimeout_seconds %d\n", indent, cfg.TimeoutSeconds)
+				}
+				if cfg.Audience != "" {
+					fmt.Fprintf(b, "%s\taudience %s\n", indent, cfg.Audience)
+				}
+				fmt.Fprintf(b, "%s}\n", indent)
+				return
+			}
+		}
+		// verify_google_idtoken — emit policy_name, audience, allowed_emails subdirectives.
+		if shortName == "verify_google_idtoken" && len(v.Config) > 0 {
+			var cfg verifyGoogleIDTokenConfig
+			if err := json.Unmarshal(v.Config, &cfg); err == nil && cfg.PolicyName != "" {
+				fmt.Fprintf(b, "%s%s {\n", indent, shortName)
+				fmt.Fprintf(b, "%s\tpolicy_name %s\n", indent, cfg.PolicyName)
+				fmt.Fprintf(b, "%s\taudience %s\n", indent, cfg.Audience)
+				for _, email := range cfg.AllowedEmails {
+					fmt.Fprintf(b, "%s\tallowed_emails %s\n", indent, email)
 				}
 				fmt.Fprintf(b, "%s}\n", indent)
 				return

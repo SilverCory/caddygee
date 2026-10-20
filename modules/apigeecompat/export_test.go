@@ -2,10 +2,12 @@
 package apigeecompat
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
+	"golang.org/x/oauth2"
 )
 
 // ZeroContext returns a zero-value caddy.Context for use in unit tests where
@@ -85,4 +87,18 @@ func NewQuotaWithLimitRef(limitRef, intervalRef string) *Quota {
 		IntervalRef: intervalRef,
 		buckets:     make(map[string]*quotaBucket),
 	}
+}
+
+// SetGoogleIDTokenValidate replaces the package-level token validation function
+// for use in unit tests. Returns a cleanup function that restores the original.
+func SetGoogleIDTokenValidate(fn func(ctx context.Context, token, audience string) (email, sub, hd string, err error)) func() {
+	orig := googleIDTokenValidate
+	googleIDTokenValidate = fn
+	return func() { googleIDTokenValidate = orig }
+}
+
+// SetServiceCalloutTokenSource injects a fixed token source into a ServiceCallout
+// for unit tests, bypassing idtoken.NewTokenSource in Provision.
+func (s *ServiceCallout) SetTokenSource(ts oauth2.TokenSource) {
+	s.tokenSource = ts
 }
