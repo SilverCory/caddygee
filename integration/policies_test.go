@@ -3,6 +3,7 @@
 package integration_test
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -236,8 +237,8 @@ func TestPolicy_VerifyJWT(t *testing.T) {
 	}
 }
 
-// TestPolicy_VerifyAPIKey verifies that the verify_api_key policy passes
-// through requests when Firestore is not configured (passthrough mode).
+// TestPolicy_VerifyAPIKey verifies that the verify_api_key policy is fail-closed
+// when Firestore is not configured: requests must be rejected with 503.
 func TestPolicy_VerifyAPIKey(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -247,11 +248,39 @@ func TestPolicy_VerifyAPIKey(t *testing.T) {
 	gw := startGateway(t, "test")
 	gw.Deploy("testdata/integration/verify_api_key/apiproxy", "verify-api-key", upstream.URL)
 
-	// Without Firestore the policy is a passthrough — any request should succeed.
+	// Without Firestore the policy is fail-closed — any request must be rejected.
 	resp := gw.GET("/test/verify-api-key/", "X-Api-Key", "any-key")
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 (fail-closed without Firestore), got %d", resp.StatusCode)
+	}
+}
+
+// TestPolicy_VerifyAPIKey_Passthrough verifies that the verify_api_key policy
+// passes through requests when the passthrough directive is set explicitly,
+// even when Firestore is not configured.
+func TestPolicy_VerifyAPIKey_Passthrough(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	gw := startGateway(t, "test")
+	// Deploy a fragment directly with passthrough enabled.
+	gw.DeployFragment("verify-api-key-passthrough", fmt.Sprintf(`
+	route /test/verify-api-key-passthrough/* {
+		flow_state
+		verify_api_key {
+			api_key_ref request.header.x-api-key
+			passthrough
+		}
+		reverse_proxy %s
+	}`, upstream.URL))
+
+	resp := gw.GET("/test/verify-api-key-passthrough/", "X-Api-Key", "any-key")
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 (passthrough), got %d", resp.StatusCode)
+		t.Fatalf("expected 200 (passthrough mode), got %d", resp.StatusCode)
 	}
 }
 

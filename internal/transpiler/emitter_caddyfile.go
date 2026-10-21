@@ -461,13 +461,11 @@ func emitHandler(b *strings.Builder, h Handler, indent string) {
 				return
 			}
 		}
-		// apigee_verify_api_key (passthrough) — emit a TODO comment.
 		if shortName == "verify_api_key" && len(v.Config) > 0 {
 			var cfg struct {
 				APIKeyRef string `json:"api_key_ref"`
 			}
 			if err := json.Unmarshal(v.Config, &cfg); err == nil {
-				fmt.Fprintf(b, "%s# TODO: verify_api_key not enforced — passthrough mode\n", indent)
 				fmt.Fprintf(b, "%s%s {\n", indent, shortName)
 				if cfg.APIKeyRef != "" {
 					fmt.Fprintf(b, "%s\tapi_key_ref %s\n", indent, cfg.APIKeyRef)

@@ -17,6 +17,9 @@
 //	TRUSTED_PROXIES     Space-separated CIDR ranges for trusted_proxies (default: GCP LB ranges)
 //	DEBUG_SIGNING_KEY   HMAC signing key for debug token issuance/verification (optional)
 //	DEBUG_ALLOWED_EMAIL If set, only this OIDC email may call /debug-token endpoints (optional)
+//
+// API key management endpoints (/developers, /apps, /products) require Firestore
+// (initialised automatically when CONFIG_BUCKET is set).
 package main
 
 import (
@@ -84,8 +87,16 @@ func main() {
 
 	ctx := context.Background()
 
-	// Initialise Firestore client for debug blocklist (if a signing key is configured).
-	if len(srv.debugSigningKey) > 0 {
+	// Initialise Firestore client when CONFIG_BUCKET is set (needed for API key
+	// management and debug blocklist). Falls back to env-var-only blocklist on error.
+	if bucket != "" {
+		if fsClient, err := firestore.NewClient(ctx, firestore.DetectProjectID); err != nil {
+			log.Printf("WARNING: Firestore client unavailable — API key management disabled, debug blocklist will use DEBUG_BLOCKLIST only: %v", err)
+		} else {
+			srv.fsClient = fsClient
+		}
+	} else if len(srv.debugSigningKey) > 0 {
+		// No CONFIG_BUCKET but signing key is set — still try Firestore for blocklist.
 		if fsClient, err := firestore.NewClient(ctx, firestore.DetectProjectID); err != nil {
 			log.Printf("WARNING: Firestore client unavailable — debug blocklist will use DEBUG_BLOCKLIST env var only: %v", err)
 		} else {
@@ -115,6 +126,7 @@ func main() {
 	mux.HandleFunc("/deploy", srv.handleDeploy)
 	mux.HandleFunc("/debug-token", srv.handleDebugToken)
 	mux.HandleFunc("/debug-token/revoke", srv.handleRevokeDebugToken)
+	srv.registerAPIKeyRoutes(mux)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
