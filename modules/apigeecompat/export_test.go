@@ -28,10 +28,25 @@ func NewFlowStateManagerWithEnv(envName string) FlowStateManager {
 	return FlowStateManager{envName: envName}
 }
 
-// NewFlowStateManagerWithDebugToken creates a FlowStateManager pre-seeded with
-// a debug token. Used by tests to verify token-gated debug mode.
-func NewFlowStateManagerWithDebugToken(token string) FlowStateManager {
-	return FlowStateManager{debugToken: token}
+// NewFlowStateManagerWithSigningKey creates a FlowStateManager pre-seeded with
+// an HMAC signing key. Used by tests to verify token-gated debug mode.
+func NewFlowStateManagerWithSigningKey(key []byte) FlowStateManager {
+	return FlowStateManager{signingKey: key}
+}
+
+// NewFlowStateManagerWithBlocklist creates a FlowStateManager pre-seeded with
+// a signing key and a static blocklist of token IDs.
+func NewFlowStateManagerWithBlocklist(key []byte, blocklist []string) FlowStateManager {
+	bl := make(map[string]struct{}, len(blocklist))
+	for _, id := range blocklist {
+		bl[id] = struct{}{}
+	}
+	return FlowStateManager{signingKey: key, staticBlocklist: bl}
+}
+
+// VerifyDebugToken exposes verifyDebugToken for use in tests.
+func VerifyDebugToken(signingKey []byte, token string) (id, sub string, ok bool) {
+	return verifyDebugToken(signingKey, token)
 }
 
 // MatchPattern exposes matchPattern for white-box unit tests.

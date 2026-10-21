@@ -9,12 +9,14 @@
 //
 // Environment variables:
 //
-//	CONFIG_BUCKET   GCS bucket name holding fragment files (required)
-//	DEPLOY_PORT      HTTP port for the deploy endpoint (default: 9090)
-//	CADDY_ADMIN      Caddy admin API address (default: localhost:2019)
-//	CADDYFILE_PATH   Path to write the merged Caddyfile (default: /etc/caddy/Caddyfile)
-//	LISTEN_ADDRESS   Caddy listen address passed to the merger (default: :8080)
-//	TRUSTED_PROXIES  Space-separated CIDR ranges for trusted_proxies (default: GCP LB ranges)
+//	CONFIG_BUCKET       GCS bucket name holding fragment files (required)
+//	DEPLOY_PORT         HTTP port for the deploy endpoint (default: 9090)
+//	CADDY_ADMIN         Caddy admin API address (default: localhost:2019)
+//	CADDYFILE_PATH      Path to write the merged Caddyfile (default: /etc/caddy/Caddyfile)
+//	LISTEN_ADDRESS      Caddy listen address passed to the merger (default: :8080)
+//	TRUSTED_PROXIES     Space-separated CIDR ranges for trusted_proxies (default: GCP LB ranges)
+//	DEBUG_SIGNING_KEY   HMAC signing key for debug token issuance/verification (optional)
+//	DEBUG_ALLOWED_EMAIL If set, only this OIDC email may call /debug-token endpoints (optional)
 package main
 
 import (
@@ -32,11 +34,13 @@ import (
 	"sync"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/idtoken"
 	"google.golang.org/api/iterator"
 
 	"caddygee/internal/transpiler"
+	"caddygee/modules/apigeecompat"
 )
 
 func main() {
@@ -56,14 +60,19 @@ func main() {
 	}
 
 	srv := &deployServer{
-		bucket:         bucket,
-		audience:       audience,
-		adminAddr:      adminAddr,
-		caddyfilePath:  caddyfilePath,
-		listenAddr:     listenAddr,
-		trustedProxies: trustedProxies,
-		httpClient:     &http.Client{Timeout: 30 * time.Second},
-		caddyBin:       caddyBinPath,
+		bucket:            bucket,
+		audience:          audience,
+		adminAddr:         adminAddr,
+		caddyfilePath:     caddyfilePath,
+		listenAddr:        listenAddr,
+		trustedProxies:    trustedProxies,
+		httpClient:        &http.Client{Timeout: 30 * time.Second},
+		caddyBin:          caddyBinPath,
+		debugAllowedEmail: os.Getenv("DEBUG_ALLOWED_EMAIL"),
+	}
+
+	if key := os.Getenv("DEBUG_SIGNING_KEY"); key != "" {
+		srv.debugSigningKey = []byte(key)
 	}
 
 	// CADDYGEE_BYPASS_AUTH=1 skips OIDC verification; the project ID is taken
@@ -74,6 +83,15 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	// Initialise Firestore client for debug blocklist (if a signing key is configured).
+	if len(srv.debugSigningKey) > 0 {
+		if fsClient, err := firestore.NewClient(ctx, firestore.DetectProjectID); err != nil {
+			log.Printf("WARNING: Firestore client unavailable — debug blocklist will use DEBUG_BLOCKLIST env var only: %v", err)
+		} else {
+			srv.fsClient = fsClient
+		}
+	}
 
 	if bucket == "" {
 		log.Printf("WARNING: CONFIG_BUCKET not set — running in fallback mode (no GCS, /deploy disabled)")
@@ -95,6 +113,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/deploy", srv.handleDeploy)
+	mux.HandleFunc("/debug-token", srv.handleDebugToken)
+	mux.HandleFunc("/debug-token/revoke", srv.handleRevokeDebugToken)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -134,6 +154,11 @@ type deployServer struct {
 	verifyToken    verifyTokenFunc // nil → uses idtoken.Validate
 	caddyBin       string          // path to caddy binary; defaults to "caddy"
 	mu             sync.Mutex      // serialises concurrent deploys
+
+	// Debug token issuance.
+	debugSigningKey  []byte          // from DEBUG_SIGNING_KEY; nil = endpoint disabled
+	debugAllowedEmail string         // from DEBUG_ALLOWED_EMAIL; empty = any authenticated caller
+	fsClient         *firestore.Client // nil when Firestore not available
 }
 
 func (s *deployServer) caddy() string {
@@ -244,6 +269,117 @@ func (s *deployServer) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleDebugToken handles POST /debug-token.
+// Requires the same Google OIDC auth as /deploy.
+// Returns a new HMAC-signed debug token bound to the caller's OIDC subject.
+func (s *deployServer) handleDebugToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if len(s.debugSigningKey) == 0 {
+		http.Error(w, "debug token issuance not configured (DEBUG_SIGNING_KEY not set)", http.StatusServiceUnavailable)
+		return
+	}
+	email, sub, err := s.verifyDebugCaller(r)
+	if err != nil {
+		log.Printf("debug-token auth failed: %v", err)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	token, err := apigeecompat.IssueDebugToken(s.debugSigningKey, sub)
+	if err != nil {
+		log.Printf("debug-token issue failed: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// Extract just the ID portion (first segment) for logging.
+	id := token[:strings.IndexByte(token, '.')]
+	log.Printf("issued debug token id=%s caller=%s", id, email)
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprintln(w, token)
+}
+
+// handleRevokeDebugToken handles POST /debug-token/revoke.
+// Requires the same Google OIDC auth as /deploy.
+// Adds the given token ID to the Firestore debug_blocklist collection.
+func (s *deployServer) handleRevokeDebugToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if len(s.debugSigningKey) == 0 {
+		http.Error(w, "debug token management not configured (DEBUG_SIGNING_KEY not set)", http.StatusServiceUnavailable)
+		return
+	}
+	email, _, err := s.verifyDebugCaller(r)
+	if err != nil {
+		log.Printf("debug-token/revoke auth failed: %v", err)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form body", http.StatusBadRequest)
+		return
+	}
+	id := strings.TrimSpace(r.FormValue("id"))
+	if id == "" {
+		http.Error(w, "id field required", http.StatusBadRequest)
+		return
+	}
+	if s.fsClient == nil {
+		http.Error(w, "Firestore not configured — set DEBUG_BLOCKLIST env var and restart to revoke tokens", http.StatusServiceUnavailable)
+		return
+	}
+	_, err = s.fsClient.Collection("debug_blocklist").Doc(id).Set(r.Context(), map[string]interface{}{
+		"revoked_by": email,
+		"revoked_at": time.Now().UTC(),
+	})
+	if err != nil {
+		log.Printf("debug-token/revoke Firestore write failed id=%s: %v", id, err)
+		http.Error(w, "failed to revoke token", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("revoked debug token id=%s by=%s", id, email)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// verifyDebugCaller authenticates a /debug-token or /debug-token/revoke request
+// using the same OIDC flow as /deploy. Returns the caller's email and OIDC subject.
+// If DEBUG_ALLOWED_EMAIL is set, the email must match.
+func (s *deployServer) verifyDebugCaller(r *http.Request) (email, sub string, err error) {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return "", "", fmt.Errorf("missing Bearer token")
+	}
+	token := strings.TrimPrefix(auth, "Bearer ")
+
+	if s.verifyToken != nil {
+		// In bypass mode, verifyToken returns a project ID, not sub/email.
+		// Treat the project ID as both email and sub for testing purposes.
+		projectID, verifyErr := s.verifyToken(r.Context(), token, s.audience)
+		if verifyErr != nil {
+			return "", "", verifyErr
+		}
+		return projectID, projectID, nil
+	}
+
+	p, verifyErr := idtoken.Validate(r.Context(), token, s.audience)
+	if verifyErr != nil {
+		return "", "", fmt.Errorf("OIDC token validation: %w", verifyErr)
+	}
+
+	email, _ = p.Claims["email"].(string)
+	sub, _ = p.Claims["sub"].(string)
+	if email == "" || sub == "" {
+		return "", "", fmt.Errorf("missing email or sub claim in token")
+	}
+	if s.debugAllowedEmail != "" && email != s.debugAllowedEmail {
+		return "", "", fmt.Errorf("caller %q is not in DEBUG_ALLOWED_EMAIL", email)
+	}
+	return email, sub, nil
+}
+
 // verifyIDToken validates the Bearer token in Authorization, verifies its
 // audience matches s.audience (SEC-1/SEC-3), and returns the caller's GCP
 // project ID extracted from the service account email.
@@ -344,6 +480,7 @@ func (s *deployServer) buildMergedCaddyfile(ctx context.Context, projectID, serv
 		ListenAddress:  s.listenAddr,
 		TrustedProxies: s.trustedProxies,
 		AdminAddress:   s.adminAddr,
+		LogLevel:       os.Getenv("CADDY_LOG_LEVEL"),
 	})
 }
 
@@ -374,6 +511,7 @@ func (s *deployServer) buildAndWriteCaddyfile(ctx context.Context) error {
 		CloudRun:      true,
 		ListenAddress: s.listenAddr,
 		AdminAddress:  s.adminAddr,
+		LogLevel:      os.Getenv("CADDY_LOG_LEVEL"),
 	})
 	if err != nil {
 		return err

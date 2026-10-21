@@ -146,7 +146,9 @@ The caller's service account must have `roles/run.invoker` on the caddygee Cloud
 | `TRUSTED_PROXIES` | GCP LB ranges | Space-separated CIDR ranges for `trusted_proxies` in the global options block |
 | `CADDY_ADMIN` | `localhost:2019` | Caddy admin API address for hot-reload |
 | `CADDYFILE_PATH` | `/etc/caddy/Caddyfile` | Path caddygee-server writes the merged Caddyfile to |
-| `DEBUG_TOKEN` | — | If set, requests with `X-Apigee-Debug: <token>` or `?_debug=<token>` get verbose per-handler logs |
+| `DEBUG_SIGNING_KEY` | — | If set, enables HMAC-signed debug tokens; issue tokens via `POST /debug-token` on the deploy server |
+| `DEBUG_ALLOWED_EMAIL` | — | Optional: if set, only this OIDC email may call `/debug-token` and `/debug-token/revoke` |
+| `DEBUG_BLOCKLIST` | — | Comma-separated token IDs to revoke at startup (env-var fallback when Firestore is not configured) |
 
 > **Note:** Cloud Run automatically injects `PORT` — do not set it manually. Caddy listens on `LISTEN_ADDRESS` (`:8080`), not `PORT`.
 
@@ -188,6 +190,7 @@ Several modules use Cloud Firestore for distributed state. Enable by adding the 
 | `verify_api_key` | Passthrough (logs warning) | Enforces — looks up key in `api_keys` collection |
 | `quota` | In-memory per-process counter | Distributed atomic counter in `quotas` collection |
 | `kvm` | Static baked-in values | Live values fetched from `kvm` collection (TTL from `<ExpiryTimeInSecs>`) |
+| `flow_state` (debug blocklist) | Falls back to `DEBUG_BLOCKLIST` env var | Revoked token IDs stored in `debug_blocklist` collection; checked with 30s cache |
 
 ### Required Firestore collections
 
@@ -207,7 +210,38 @@ The caddygee Cloud Run service account needs `roles/datastore.user` on the GCP p
 
 ## Debug Logging
 
-Set `DEBUG_TOKEN` to a secret value. Any request that includes a matching `X-Apigee-Debug` header or `?_debug=` query parameter will emit verbose per-handler logs for that request only. If `DEBUG_TOKEN` is unset, debug logging is always disabled.
+Debug tokens are HMAC-signed and tied to the issuer's GCP identity — they do not need to be stored. Set `DEBUG_SIGNING_KEY` to a secret value on the caddygee instance, then issue a personal token via the deploy server:
+
+```bash
+# Obtain an OIDC token for the caddygee audience (same as /deploy)
+OIDC_TOKEN=$(gcloud auth print-identity-token --audiences=$CADDYGEE_AUDIENCE)
+
+# Issue a debug token (valid for your GCP identity, lifetime until revoked)
+TOKEN=$(curl -s -X POST https://<deploy-server>/debug-token \
+  -H "Authorization: Bearer $OIDC_TOKEN")
+```
+
+Include the token in any request to activate verbose per-handler logs for that request only:
+
+```bash
+curl -H "X-Apigee-Debug: $TOKEN" https://<api>/some/route
+# or: curl "https://<api>/some/route?_debug=$TOKEN"
+```
+
+Log lines include `debug_id` and `debug_sub` fields so all entries for a session are easily correlated.
+
+To revoke a token (e.g. if it leaks into production):
+
+```bash
+ID=$(echo $TOKEN | cut -d. -f1)
+curl -s -X POST https://<deploy-server>/debug-token/revoke \
+  -H "Authorization: Bearer $OIDC_TOKEN" \
+  -d "id=$ID"
+```
+
+Revocation is stored in Firestore (`debug_blocklist` collection) and propagates within 30 seconds. If Firestore is not configured, use `DEBUG_BLOCKLIST=<id>,...` and restart.
+
+If `DEBUG_SIGNING_KEY` is unset, debug logging is entirely disabled.
 
 ## Architecture Notes
 

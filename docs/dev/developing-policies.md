@@ -242,4 +242,4 @@ debugLog(r, ev.logger, "my_policy: extracted value",
 )
 ```
 
-Debug mode is enabled per-request via the `X-Apigee-Debug` header or `?_debug=` query param. Both must match the `DEBUG_TOKEN` env var. If `DEBUG_TOKEN` is unset, debug mode is disabled for all requests.
+Debug mode is enabled per-request via the `X-Apigee-Debug` header or `?_debug=` query param. The value must be a valid HMAC-signed debug token issued by `POST /debug-token` on the deploy server. Token verification uses `DEBUG_SIGNING_KEY`; if unset, debug mode is disabled for all requests. Log lines automatically include `debug_id` and `debug_sub` fields identifying the token and its issuer.

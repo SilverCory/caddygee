@@ -9,12 +9,15 @@ import (
 
 var defaultTrustedProxies = []string{"130.211.0.0/22", "35.191.0.0/16"}
 
-func cloudRunGlobalBlock(adminAddr string, trustedProxies []string) string {
+func cloudRunGlobalBlock(adminAddr string, trustedProxies []string, logLevel string) string {
 	if adminAddr == "" {
 		adminAddr = "localhost:2019"
 	}
 	if len(trustedProxies) == 0 {
 		trustedProxies = defaultTrustedProxies
+	}
+	if logLevel == "" {
+		logLevel = "INFO"
 	}
 	return fmt.Sprintf("{"+`
 	admin %s
@@ -25,10 +28,10 @@ func cloudRunGlobalBlock(adminAddr string, trustedProxies []string) string {
 	log {
 		output stdout
 		format json
-		level INFO
+		level %s
 	}
 }
-`, adminAddr, strings.Join(trustedProxies, " "))
+`, adminAddr, strings.Join(trustedProxies, " "), logLevel)
 }
 
 const cloudRunServerDirectives = `
@@ -65,7 +68,7 @@ func EmitCaddyfile(cfg *CaddyConfig, opts Options) (string, error) {
 	}
 
 	if opts.CloudRun {
-		b.WriteString(cloudRunGlobalBlock(opts.AdminAddress, opts.TrustedProxies))
+		b.WriteString(cloudRunGlobalBlock(opts.AdminAddress, opts.TrustedProxies, opts.LogLevel))
 	}
 
 	// M4: Sort server keys for deterministic output.

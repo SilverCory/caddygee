@@ -345,11 +345,18 @@ type gatewayHandle struct {
 	workDir     string
 	gcs         *fakeGCS
 	projectID   string
+	caddyLog    *testLog // caddy subprocess log (may be watched for debug lines)
 }
 
 // startGateway builds and starts caddygee-server + caddy for one test.
 // envName sets ENVIRONMENT_NAME in the subprocess.
 func startGateway(t *testing.T, envName string) *gatewayHandle {
+	return startGatewayWithOpts(t, envName, nil)
+}
+
+// startGatewayWithOpts is like startGateway but accepts additional env vars
+// appended to the subprocess environment (e.g. DEBUG_SIGNING_KEY).
+func startGatewayWithOpts(t *testing.T, envName string, extraEnv []string) *gatewayHandle {
 	t.Helper()
 	buildBinaries(t)
 
@@ -385,6 +392,7 @@ func startGateway(t *testing.T, envName string) *gatewayHandle {
 		// Strip any ADC that might interfere with the emulator.
 		"GOOGLE_APPLICATION_CREDENTIALS=",
 	)
+	env = append(env, extraEnv...)
 
 	srvCmd := exec.Command(caddygeeSrvBin)
 	srvCmd.Env = env
@@ -405,8 +413,9 @@ func startGateway(t *testing.T, envName string) *gatewayHandle {
 	caddyCmd := exec.Command(caddyBin, "run", "--config", caddyfilePath, "--adapter", "caddyfile")
 	caddyCmd.Env = append(env, "CADDYFILE_PATH="+caddyfilePath)
 	caddyCmd.Dir = workDir
-	caddyCmd.Stdout = newTestLog(t, "[caddy] ")
-	caddyCmd.Stderr = newTestLog(t, "[caddy] ")
+	caddyLog := newTestLog(t, "[caddy] ")
+	caddyCmd.Stdout = caddyLog
+	caddyCmd.Stderr = caddyLog
 	if err := caddyCmd.Start(); err != nil {
 		t.Fatalf("starting caddy: %v", err)
 	}
@@ -423,6 +432,7 @@ func startGateway(t *testing.T, envName string) *gatewayHandle {
 		workDir:    workDir,
 		gcs:        gcs,
 		projectID:  projectID,
+		caddyLog:   caddyLog,
 	}
 
 	// Wait for caddy admin API to be ready.
@@ -435,6 +445,30 @@ func startGateway(t *testing.T, envName string) *gatewayHandle {
 	}
 
 	return h
+}
+
+// IssueDebugToken calls POST /debug-token on the deploy server using bypass auth
+// (project ID as the Bearer token). Returns the issued token string.
+func (h *gatewayHandle) IssueDebugToken() string {
+	h.t.Helper()
+	req, err := http.NewRequest(http.MethodPost,
+		"http://localhost:"+h.deployPort+"/debug-token", nil)
+	if err != nil {
+		h.t.Fatalf("building debug-token request: %v", err)
+	}
+	// In bypass mode the bearer token is used as the project/identity value.
+	req.Header.Set("Authorization", "Bearer "+h.projectID)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.t.Fatalf("POST /debug-token: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		h.t.Fatalf("POST /debug-token returned %d: %s", resp.StatusCode, body)
+	}
+	return strings.TrimSpace(string(body))
 }
 
 // Deploy transpiles apiproxy at bundlePath, substitutes upstreamURL for
@@ -646,14 +680,33 @@ func waitForHTTP(url string, timeout time.Duration) error {
 }
 
 // testLog redirects subprocess output to t.Log.
+// It also supports watching for lines containing a given substring.
 type testLog struct {
-	t      *testing.T
-	prefix string
-	buf    strings.Builder
+	t       *testing.T
+	prefix  string
+	buf     strings.Builder
+	mu      sync.Mutex
+	watches []logWatch
+}
+
+type logWatch struct {
+	substr string
+	ch     chan string
 }
 
 func newTestLog(t *testing.T, prefix string) *testLog {
 	return &testLog{t: t, prefix: prefix}
+}
+
+// Watch returns a channel that receives (at most once) the first log line
+// containing substr. The channel is buffered (size 1) so the sender never
+// blocks even if the caller is slow.
+func (l *testLog) Watch(substr string) <-chan string {
+	ch := make(chan string, 1)
+	l.mu.Lock()
+	l.watches = append(l.watches, logWatch{substr: substr, ch: ch})
+	l.mu.Unlock()
+	return ch
 }
 
 func (l *testLog) Write(p []byte) (int, error) {
@@ -664,9 +717,27 @@ func (l *testLog) Write(p []byte) (int, error) {
 		if idx < 0 {
 			break
 		}
-		l.t.Log(l.prefix + s[:idx])
+		line := s[:idx]
+		l.t.Log(l.prefix + line)
 		l.buf.Reset()
 		l.buf.WriteString(s[idx+1:])
+
+		// Notify any active watches.
+		l.mu.Lock()
+		remaining := l.watches[:0]
+		for _, w := range l.watches {
+			if strings.Contains(line, w.substr) {
+				select {
+				case w.ch <- line:
+				default:
+				}
+				// Remove fired watch.
+			} else {
+				remaining = append(remaining, w)
+			}
+		}
+		l.watches = remaining
+		l.mu.Unlock()
 	}
 	return len(p), nil
 }

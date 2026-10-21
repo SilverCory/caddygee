@@ -80,9 +80,10 @@ Injects a fresh `FlowState` into the request context. Must be the **first handle
 in every route. Seeds `environment.name` from the `ENVIRONMENT_NAME` environment
 variable at provision time.
 
-Also gates debug logging: if `DEBUG_TOKEN` is set and the request includes a matching
-`X-Apigee-Debug` header or `?_debug=` query param, verbose per-handler logs are emitted
-for that request only.
+Also gates debug logging: if `DEBUG_SIGNING_KEY` is set and the request includes a valid
+HMAC-signed debug token in `X-Apigee-Debug` header or `?_debug=` query param, verbose
+per-handler logs are emitted for that request only. Tokens are issued via `POST /debug-token`
+on the deploy server and carry the issuer's GCP identity (`debug_sub` log field).
 
 ```caddyfile
 flow_state

@@ -35,6 +35,10 @@ type Options struct {
 	// collisions when multiple bundles are merged into a single Caddyfile.
 	// When empty, no prefix is added.
 	MatcherPrefix string
+	// LogLevel overrides the Caddy log level in the global options block.
+	// Only used when CloudRun is true. When empty, defaults to "INFO".
+	// Use "DEBUG" to capture per-request debug log lines from apigeecompat modules.
+	LogLevel string
 }
 
 // CaddyConfig is the top-level internal model for a Caddy configuration.
